@@ -1,0 +1,48 @@
+schema_version: 1
+
+stage:
+  name: leakage_safe_ml_dataset
+  seed: 12345
+
+inputs:
+  dataset_id: s01data
+  synthetic_version: v001
+  realization_directory: synthetic/v001/realizations
+
+split:
+  unit: realization
+  fractions: [0.70, 0.15, 0.15]
+
+prior:
+  source: gaussian_filter_of_synthetic_truth
+  truth_derived: true
+  cutoff_hz: 2.0
+  dt_seconds: 0.004
+  sigma_constant: 0.133
+  lateral_sigma_ratio: 2.0
+  boundary_mode: reflect
+
+patches:
+  output_shape: [50, 100]
+  scales:
+    - {raw_shape: [40, 80], fraction: 0.25}
+    - {raw_shape: [50, 100], fraction: 0.50}
+    - {raw_shape: [64, 128], fraction: 0.25}
+  per_realization:
+    train: 250
+    validation: 100
+    test: 100
+  maximum_invalid_fraction: 0.15
+  interpolation:
+    continuous: bilinear
+    categorical: nearest
+
+normalization:
+  fit_on: training_realizations_only
+  input_channels: [avo_near, avo_mid, avo_far]
+  target_channels: [vp, vs, density]
+  apply_target_statistics_to_prior: true
+
+outputs:
+  version: ds_v001_realization_split_multiscale
+  directory: datasets/ds_v001_realization_split_multiscale

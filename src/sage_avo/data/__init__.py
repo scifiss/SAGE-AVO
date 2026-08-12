@@ -10,6 +10,7 @@ from .field import (
 )
 from .layout import DataLayout
 from .interpretation import PreparedWell, read_las_well, read_las_wells, read_petrel_points
+from .indexed_dataset import IndexedRealizationPatches
 from .normalization import NormalizationStats, compute_normalization_stats
 from .prior import PriorDefinition, make_truth_derived_prior
 from .splits import RealizationSplit, split_realizations
@@ -17,6 +18,7 @@ from .splits import RealizationSplit, split_realizations
 __all__ = [
     "DataLayout",
     "FieldLineStacks",
+    "IndexedRealizationPatches",
     "NormalizationStats",
     "PreparedWell",
     "PriorDefinition",

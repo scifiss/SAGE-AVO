@@ -1,6 +1,7 @@
 # Copy this file to configs/paths.yaml and edit locally.
 # configs/paths.yaml is ignored by git.
 work_data_root: /path/to/this/repository/data
+private_artifact_root: /path/to/private/SAGE_AVO_private_artifacts
 s01_raw_root: /path/to/private/s01/raw
 field_segy: /path/to/private/s01/raw/seismic/ss.segy
 horizon_t6: /path/to/private/s01/raw/horizon/t6_cut.dat

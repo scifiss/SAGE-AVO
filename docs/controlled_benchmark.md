@@ -1,110 +1,74 @@
 # Controlled five-condition benchmark
 
-## Question
+## Scientific question
 
 How much information does SAGE-AVO add beyond a supplied low-frequency elastic
 prior, and what are the incremental contributions of graph propagation, RGT
 steering, and differentiable AVO consistency?
 
-The experiment configuration is `configs/controlled_ablation_v1.yaml`. A new
-configuration version represents any change to a variant or shared condition.
+The production contract is `configs/sage_avo_s01.yaml`; Notebooks 02–05 expose
+the complete data-generation, dataset, training, and evaluation sequence.
 
-## Conditions
+## Matched conditions
 
-1. `low_prior`: no inference; prediction is the supplied Vp/Vs/density prior.
-2. `full`: RGT-steered TransformerConv graph and physics loss.
-3. `no_gnn`: CNN conditioning/decoder without graph message passing.
-4. `no_rgt`: the same graph branch with Cartesian same-time horizontal edges.
-5. `no_physics`: full architecture with physics-loss weight exactly zero.
+1. `low_prior`: supplied Vp/Vs/density prior without learned refinement;
+2. `full`: RGT-steered TransformerConv graph with physics loss;
+3. `no_gnn`: matched CNN conditioning/decoder without graph message passing;
+4. `no_rgt`: matched graph branch with Cartesian lateral connectivity;
+5. `no_physics`: full architecture with the physics-loss weight set to zero.
 
-The primary benchmark isolates the incremental contributions of the SAGE-AVO
-components under a single shared experimental contract.
+HCTNet is included only after retraining with the identical prior, realization
+split, normalization, masks, inference tiling, and checkpoint-selection rule.
+Historical HCTNet values are not a controlled comparison.
 
-## Prior
+## Prior and inverse-problem scope
 
-Vp, Vs, and density priors are generated independently per channel by applying
-a 2-D Gaussian filter to synthetic truth:
+Synthetic Vp, Vs, and density priors are generated per realization by applying
+a Gaussian filter to target/truth properties:
 
 ```text
-sigma_time = 0.133 / (cutoff_hz * dt_seconds)
-           = 0.133 / (2.0 * 0.004)
-           = 16.625 samples
-
+sigma_time = 0.133 / (2.0 Hz * 0.004 s) = 16.625 samples
 sigma_lateral = 2 * sigma_time = 33.25 traces
+boundary mode = reflect
 ```
 
-Boundary mode is `reflect`. This is an oracle truth-derived background model,
-so the experiment measures elastic-prior refinement rather than AVO-only
-absolute inversion.
+This oracle truth-derived prior makes the task AVO-guided refinement of a
+supplied low-frequency model, not AVO-only absolute-property inversion.
 
 ## Immutable shared artifacts
 
-`prepare-data` creates, once:
+Notebook 02 produces field-conditioned realizations with exact dense-angle
+Zoeppritz observations. Notebook 03 then creates, once:
 
-- 100 versioned realizations;
-- a 70/20/10 realization-level split;
-- exact-Zoeppritz near/mid/far AVO;
+- a split of complete realization IDs before patching;
 - one truth-derived prior per realization;
-- training-only normalization;
-- one fixed patch-index table;
-- split, dataset, prior, and forward manifests.
+- training-realization-only normalization;
+- one multiscale patch index with raw size and resize metadata;
+- split, dataset, prior, and source-manifest hashes.
 
-Every learned condition reads these same files. Complete test realizations are
-evaluated with the same tiled Hann blending and metrics.
+Every learned condition reads these exact files. Complete test realizations use
+the same tiling, Hann blending, integration steps, masks, and metrics.
 
-## Commands
+## Training and evaluation
 
-The ML extras provide PyTorch Geometric and the training dependencies:
+Notebook 04 trains all learned variants when
+`SAGE_AVO_RUN_FULL_TRAINING=1`. Each run writes its seed, split IDs,
+normalization, prior definition, config hash, optimizer schedule, and separate
+best-flow/best-sampling checkpoints.
 
-```bash
-python -m pip install -e ".[ml]"
-```
+Notebook 05 runs inference when `SAGE_AVO_RUN_EVALUATION=1`. It reports RMSE,
+MAE, R², SSIM, mIoU, macro Dice/F1, and class IoU per realization before
+aggregation. Paired bootstrap intervals compare the full model with each
+control. Positive paired improvement is defined to mean that the full model is
+better.
 
-The smoke configuration validates the data harness with small CPU artifacts:
+The representative test realization is the ID whose full-model Vp RMSE is
+closest to the test-set median. The rule and ID are saved before figure
+generation.
 
-```bash
-python scripts/run_controlled_ablation.py \
-  --experiment-name controlled_ablation_smoke prepare-data --smoke
-```
+## Development harness boundary
 
-The complete experiment runs as:
-
-```bash
-python scripts/run_controlled_ablation.py prepare-data
-python scripts/run_controlled_ablation.py train --variant all --device cuda:0
-python scripts/run_controlled_ablation.py predict --variant all --device cuda:0
-python scripts/run_controlled_ablation.py evaluate
-python scripts/run_controlled_ablation.py figures --device cuda:0
-python scripts/run_controlled_ablation.py status
-```
-
-## Metrics and statistics
-
-The evaluator writes:
-
-- `results/controlled_ablation_metrics.csv` — pooled and mean ± standard
-  deviation across complete test realizations;
-- `results/per_realization_metrics.csv` — one realization/variant/metric row;
-- `results/paired_ablation_comparisons.csv` — paired full-versus-comparator
-  improvements with bootstrap confidence intervals.
-
-Elastic metrics are RMSE, MAE, R², and Gaussian-window SSIM. Segmentation metrics
-are pooled/per-realization mIoU, macro Dice, and class-wise IoU. A positive
-paired improvement always means the full model is better. Confidence intervals
-describe variation within this finite synthetic test family.
-
-## Representative realization
-
-The representative figure uses the test ID whose full-model Vp RMSE is closest
-to the test-set median. The ID and selection rule are written to
-`representative_realization.json` after test prediction is complete.
-
-## Run manifests
-
-Every trained and prediction condition records timestamp, config checksum, seed,
-split IDs, variant, checkpoint, epochs, normalization, prior definition, metric
-definition, hardware, and git commit when available under:
-
-```text
-results/experiments/controlled_ablation_v1/
-```
+`scripts/run_controlled_ablation.py --smoke` creates a small data-independent
+software harness for CI and operator validation. It exercises shared production
+functions but is not the field-conditioned research experiment and must not be
+used for scientific performance claims.

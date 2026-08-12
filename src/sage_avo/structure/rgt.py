@@ -31,6 +31,18 @@ class PwdRgtResult:
             raise ValueError("reference_sample lies outside the time axis")
 
 
+@dataclass(frozen=True)
+class PwdDipResult:
+    """Two-pass PWD dip and its structure-oriented seismic image."""
+
+    dip: np.ndarray
+    structure_oriented_seismic: np.ndarray
+
+    def validate(self) -> None:
+        if self.dip.ndim != 2 or self.structure_oriented_seismic.shape != self.dip.shape:
+            raise ValueError("PWD dip arrays must share one [time, cdp] shape")
+
+
 def _pava_1d(values: np.ndarray) -> np.ndarray:
     """Least-squares nondecreasing projection by pool-adjacent violators."""
     levels: list[float] = []
@@ -154,16 +166,69 @@ def estimate_pwd_rgt(
     if not np.isfinite(image).all():
         raise ValueError("seismic contains non-finite samples; repair dead CDPs before PWD")
 
+    dip_result = estimate_pwd_dip(
+        image,
+        gaussian_sigma=gaussian_sigma,
+        dip_order=dip_order,
+        dip_iterations=dip_iterations,
+        dip_rect=dip_rect,
+        structure_radius=structure_radius,
+        structure_order=structure_order,
+        structure_epsilon=structure_epsilon,
+    )
+    refined_dip = dip_result.dip
+    structure_oriented = dip_result.structure_oriented_seismic
     try:
-        from pyseistr import somean2d
-        from pyseistr.dip2d import dip2dc
         from pyseistr.rgt import rgt as rgt_from_dip
     except ImportError as error:  # pragma: no cover - optional dependency
         raise ImportError(
             "Production PWD/RGT processing requires pyseistr. Install the field "
             "extra with `python -m pip install -e \".[field]\"`."
         ) from error
+    if reference_sample is None:
+        reference_sample = int(np.argmax(np.mean(np.abs(structure_oriented), axis=1)))
+    rgt_map = rgt_from_dip(
+        refined_dip,
+        o1=float(times[0]) / 1000.0,
+        d1=float(np.median(np.diff(times))) / 1000.0,
+        order=2,
+        i0=int(reference_sample),
+        eps=float(rgt_epsilon),
+        verb=False,
+    )
+    result = PwdRgtResult(
+        dip=np.asarray(refined_dip, dtype=np.float32),
+        rgt=np.asarray(rgt_map, dtype=np.float32),
+        structure_oriented_seismic=np.asarray(structure_oriented, dtype=np.float32),
+        reference_sample=int(reference_sample),
+    )
+    result.validate()
+    return result
 
+
+def estimate_pwd_dip(
+    seismic: np.ndarray,
+    *,
+    gaussian_sigma: tuple[float, float] = (1.0, 0.0),
+    dip_order: int = 2,
+    dip_iterations: int = 14,
+    dip_rect: tuple[int, int, int] = (6, 14, 1),
+    structure_radius: int = 2,
+    structure_order: int = 2,
+    structure_epsilon: float = 0.01,
+) -> PwdDipResult:
+    """Run the historical two-pass PySeistr PWD dip sequence without RGT integration."""
+    image = np.asarray(seismic, dtype=np.float32)
+    if image.ndim != 2 or not np.isfinite(image).all():
+        raise ValueError("seismic must be a finite [time, cdp] array")
+    try:
+        from pyseistr import somean2d
+        from pyseistr.dip2d import dip2dc
+    except ImportError as error:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "Production PWD dip processing requires pyseistr. Install the field "
+            "extra with `python -m pip install -e \".[field]\"`."
+        ) from error
     first_input = gaussian_filter(image, sigma=gaussian_sigma)
     first_dip = dip2dc(
         first_input,
@@ -189,22 +254,9 @@ def estimate_pwd_rgt(
         rect=list(dip_rect),
         verb=0,
     )
-    if reference_sample is None:
-        reference_sample = int(np.argmax(np.mean(np.abs(structure_oriented), axis=1)))
-    rgt_map = rgt_from_dip(
-        refined_dip,
-        o1=float(times[0]) / 1000.0,
-        d1=float(np.median(np.diff(times))) / 1000.0,
-        order=2,
-        i0=int(reference_sample),
-        eps=float(rgt_epsilon),
-        verb=False,
-    )
-    result = PwdRgtResult(
+    result = PwdDipResult(
         dip=np.asarray(refined_dip, dtype=np.float32),
-        rgt=np.asarray(rgt_map, dtype=np.float32),
         structure_oriented_seismic=np.asarray(structure_oriented, dtype=np.float32),
-        reference_sample=int(reference_sample),
     )
     result.validate()
     return result

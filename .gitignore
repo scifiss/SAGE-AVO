@@ -12,13 +12,6 @@ venv/
 # Jupyter
 .ipynb_checkpoints/
 *.nbconvert.ipynb
-# Development-stage notebooks remain local until they execute a complete,
-# versioned workflow.
-notebooks/02_synthetic_avo_generation.ipynb
-notebooks/03_sage_avo_training.ipynb
-notebooks/04_ablation_and_interpretability.ipynb
-notebooks/05_field_application.ipynb
-
 # Editors and OS
 .DS_Store
 .idea/

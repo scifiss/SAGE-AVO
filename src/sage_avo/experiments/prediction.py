@@ -16,7 +16,14 @@ from sage_avo.models.variants import LEARNED_VARIANTS, build_sage_avo_variant
 from .manifest import build_run_manifest, write_json
 
 
-def _load_model(
+def _realization_path(dataset_directory: Path, realization_id: int) -> Path:
+    directory = dataset_directory / "realizations"
+    canonical = directory / f"realization_{realization_id:07d}.npz"
+    legacy = directory / f"realization_{realization_id:04d}.npz"
+    return canonical if canonical.exists() or not legacy.exists() else legacy
+
+
+def load_controlled_model(
     variant: str,
     config: dict[str, Any],
     checkpoint: Path,
@@ -69,11 +76,11 @@ def predict_controlled_variant(
             device_name
             or ("cuda" if torch.cuda.is_available() and config["hardware"]["preferred_device"] == "cuda" else "cpu")
         )
-        model = _load_model(variant, config, checkpoint, device)
+        model = load_controlled_model(variant, config, checkpoint, device)
     patch_shape = tuple(int(value) for value in config["patches"]["shape"])
     stride = tuple(int(value) for value in config["patches"]["stride"])
     for realization_id in split_ids["test"]:
-        with np.load(dataset_root / "realizations" / f"realization_{realization_id:04d}.npz") as archive:
+        with np.load(_realization_path(dataset_root, realization_id)) as archive:
             low = archive["low"]
             if variant == "low_prior":
                 elastic = low
@@ -94,7 +101,7 @@ def predict_controlled_variant(
         payload = {"elastic": elastic.astype(np.float32), "realization_id": realization_id}
         if segmentation is not None:
             payload["segmentation"] = segmentation
-        np.savez_compressed(output / f"realization_{realization_id:04d}.npz", **payload)
+        np.savez_compressed(output / f"realization_{realization_id:07d}.npz", **payload)
     manifest = build_run_manifest(
         repository=repository,
         config_path=config_path,

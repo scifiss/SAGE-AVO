@@ -21,13 +21,24 @@ class ForwardConfig:
     apply_mute: bool = True
 
 
-def forward_avo_three_band(
+@dataclass(frozen=True)
+class ForwardResult:
+    """Dense-angle and band-limited outputs from one exact forward run."""
+
+    reflectivity: np.ndarray
+    seismic: np.ndarray
+    stacks: np.ndarray
+    angles_degrees: np.ndarray
+    band_names: tuple[str, ...]
+
+
+def forward_avo_dense(
     vp: np.ndarray,
     vs: np.ndarray,
     density: np.ndarray,
     config: ForwardConfig = ForwardConfig(),
-) -> np.ndarray:
-    """Generate raw near/mid/far stacks with exact P-P Zoeppritz reflectivity."""
+) -> ForwardResult:
+    """Generate exact P-P reflectivity, convolved gathers, and three stacks."""
     angles = np.asarray(config.angles_degrees, dtype=float)
     reflectivity = reflectivity_gather(vp, vs, density, angles)
     seismic = convolve_time(
@@ -37,4 +48,21 @@ def forward_avo_three_band(
     )
     if config.apply_mute:
         seismic = apply_front_mute(seismic, angles, config.dt_seconds)
-    return stack_bands(seismic, angles, config.bands).astype(np.float32)
+    stacks = stack_bands(seismic, angles, config.bands)
+    return ForwardResult(
+        reflectivity=reflectivity.astype(np.float32),
+        seismic=seismic.astype(np.float32),
+        stacks=stacks.astype(np.float32),
+        angles_degrees=angles.astype(np.float32),
+        band_names=tuple(item.name for item in config.bands),
+    )
+
+
+def forward_avo_three_band(
+    vp: np.ndarray,
+    vs: np.ndarray,
+    density: np.ndarray,
+    config: ForwardConfig = ForwardConfig(),
+) -> np.ndarray:
+    """Generate raw near/mid/far stacks with exact P-P Zoeppritz reflectivity."""
+    return forward_avo_dense(vp, vs, density, config).stacks

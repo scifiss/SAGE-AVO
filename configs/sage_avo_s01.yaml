@@ -1,0 +1,71 @@
+schema_version: 1
+
+experiment:
+  name: sage_avo_s01_v001
+  seed: 12345
+  output_root: results/experiments/sage_avo_s01_v001
+
+dataset:
+  id: s01data
+  directory: datasets/ds_v001_realization_split_multiscale
+
+patches:
+  shape: [50, 100]
+  stride: [10, 25]
+
+model:
+  name: SAGE-AVO
+  input_avo_channels: [near, mid, far]
+  prior_channels: [vp_low, vs_low, density_low]
+  structural_channel: rgt
+  hidden_channels: 64
+  graph_layers: 2
+  graph_heads: 4
+  max_rgt_shift_samples: 3
+  classes: 3
+  representative_angles_degrees: [10.0, 24.0, 38.0]
+  variants:
+    full: {graph_mode: rgt, physics_weight: 0.5}
+    no_gnn: {graph_mode: none, physics_weight: 0.5}
+    no_rgt: {graph_mode: cartesian, physics_weight: 0.5}
+    no_physics: {graph_mode: rgt, physics_weight: 0.0}
+
+training:
+  epochs: 120
+  batch_size: 8
+  learning_rate: 0.00008
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  scheduler: cosine_annealing
+  validation_sample_every: 2
+  validation_sample_batches: 16
+  sample_steps_validation: 12
+  sample_steps_test: 100
+  checkpoint_criterion: mean_normalized_elastic_rmse_minus_0.1_miou
+  loss_weights:
+    flow: 1.0
+    full_property: 0.2
+    segmentation: 0.3
+    physics: 0.5
+    structure: 0.5
+
+evaluation:
+  properties: [vp, vs, density]
+  elastic_metrics: [rmse, mae, r2, ssim]
+  segmentation_metrics: [miou, macro_dice, class_iou]
+  bootstrap_repetitions: 2000
+  bootstrap_confidence: 0.95
+  representative_rule: median_full_model_vp_rmse
+  graph_display_fraction: 0.15
+
+field_application:
+  dataset_id: s01data
+  stage01_version: v001
+  avo_channels: field low/mid/high stacks from configured gather-coordinate bins
+  structural_channel: rgt_tau.npy
+  low_frequency_prior: elastic_background.npy
+  interpretation: field deployment and QC; upstream wells are not blind validation
+
+hardware:
+  preferred_device: cuda
+  deterministic_algorithms: true

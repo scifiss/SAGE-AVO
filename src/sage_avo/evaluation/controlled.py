@@ -18,7 +18,17 @@ LOWER_IS_BETTER = {"rmse", "mae"}
 
 
 def _prediction_path(experiment_directory: Path, variant: str, realization_id: int) -> Path:
-    return experiment_directory / "predictions" / variant / f"realization_{realization_id:04d}.npz"
+    directory = experiment_directory / "predictions" / variant
+    canonical = directory / f"realization_{realization_id:07d}.npz"
+    legacy = directory / f"realization_{realization_id:04d}.npz"
+    return canonical if canonical.exists() or not legacy.exists() else legacy
+
+
+def _realization_path(dataset_directory: Path, realization_id: int) -> Path:
+    directory = dataset_directory / "realizations"
+    canonical = directory / f"realization_{realization_id:07d}.npz"
+    legacy = directory / f"realization_{realization_id:04d}.npz"
+    return canonical if canonical.exists() or not legacy.exists() else legacy
 
 
 def _load_prediction(path: Path) -> tuple[np.ndarray, np.ndarray | None]:
@@ -88,10 +98,11 @@ def evaluate_controlled_ablation(
     pooled_segmentation_truth: list[np.ndarray] = []
     pooled_segmentation_prediction = {variant: [] for variant in ALL_VARIANTS if variant != "low_prior"}
     for realization_id in test_ids:
-        with np.load(dataset_root / "realizations" / f"realization_{realization_id:04d}.npz") as archive:
+        with np.load(_realization_path(dataset_root, realization_id)) as archive:
             truth = archive["elastic"]
             segmentation_truth = archive["segmentation"]
-            mask = archive["mask"].astype(bool)
+            mask_name = "valid_mask" if "valid_mask" in archive.files else "mask"
+            mask = archive[mask_name].astype(bool)
         for channel, name in enumerate(PROPERTIES):
             pooled_truth[name].append(truth[channel][mask])
         pooled_segmentation_truth.append(segmentation_truth[mask])

@@ -1,0 +1,84 @@
+schema_version: 1
+
+stage:
+  name: field_conditioned_synthetic_avo
+  seed: 12345
+  realization_count: 200
+  realization_id_offset: 1000000
+
+inputs:
+  dataset_id: s01data
+  structure_version: v001
+  elastic_model_directory: derived/rf_models_v001
+
+geology:
+  fold_probability: 0.8
+  fold_amplitude_samples: [10.0, 30.0]
+  fold_cycles: [0.3, 3.0]
+  secondary_fold_amplitude_samples: [2.0, 8.0]
+  secondary_fold_cycles: [2.0, 4.0]
+  maximum_faults: 7
+  fault_throw_samples: [-40.0, 40.0]
+  fault_dip_samples_per_trace: [-0.5, 0.5]
+  sand_heterogeneity_std: [0.01, 0.03]
+  porosity_heterogeneity_std: [0.003, 0.012]
+  heterogeneity_sigma_samples: [1.0, 3.0]
+  # Calibrated Stage-01 reservoir P(sand) spans approximately 0.13--0.48.
+  # The historical 0.5 threshold was coupled to the reversed DELTA convention.
+  sand_facies_probability_threshold: 0.30
+  preserve_regional_background_outside_reservoir: true
+
+fluid_substitution:
+  enabled: true
+  plume_count: [1, 2]
+  plume_lateral_radius_samples: [15.0, 40.0]
+  plume_vertical_radius_samples: [5.0, 15.0]
+  minimum_sand_thickness_samples: 7
+  co2_saturation: [0.30, 0.80]
+  critical_porosity: 0.36
+  coordination_factor: 2.8
+  quartz_bulk_modulus_gpa: 39.0
+  clay_bulk_modulus_gpa: 21.0
+  quartz_shear_modulus_gpa: 45.0
+  clay_shear_modulus_gpa: 6.85
+  quartz_density_g_cc: 2.65
+  clay_density_g_cc: 2.60
+  overburden_density_kg_m3: 1600.0
+  gravity_m_s2: 9.8
+  depth_origin_m: 2000.0
+  depth_increment_m: 4.0
+  brine_bulk_modulus_gpa: 2.20
+  co2_bulk_modulus_gpa: 0.10
+  brine_density_g_cc: 1.03
+  co2_density_g_cc: 0.65
+  brie_exponent: 3.0
+
+forward:
+  primary_operator: exact_pp_zoeppritz_numpy
+  production_alternative: madagascar_sfzoeppritz2
+  local_backend: numpy
+  angles_degrees: {start: 3, stop: 45, step: 1}
+  wavelet: {type: ricker, frequency_hz: 14.0, samples: 81}
+  dt_seconds: 0.004
+  front_mute:
+    enabled: true
+    start: [30.0, 0.0]
+    end: [45.0, 0.1]
+    taper_samples: 5
+  legacy_bands:
+    near: [3.0, 17.0]
+    mid: [17.0, 31.0]
+    far: [31.0, 45.0]
+  current_bands:
+    near: [3.0, 17.0]
+    mid: [18.0, 31.0]
+    far: [32.0, 45.0]
+
+structure_qc:
+  recalculate_pwd_dip: true
+  recalculate_pwd_rgt: false
+  graph_rgt_channel: coherently_warped_stage01_rgt
+
+outputs:
+  version: v001
+  directory: synthetic/v001/realizations

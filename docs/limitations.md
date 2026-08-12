@@ -20,9 +20,11 @@
    related forward assumptions. Wavelet, phase, Q, noise, scaling, and processing
    variation require broader augmentation.
 
-6. **Dataset-specific SEG-Y semantics.** The configured S01 export stores
-   incidence-angle bins in the offset word. Other datasets require independent
-   header verification or offset-to-angle conversion.
+6. **Dataset-specific SEG-Y semantics.** The local S01 configuration interprets
+   a configured gather-coordinate header as incidence-angle bins. This requires
+   support from acquisition/export metadata; matching numerical bins alone does
+   not establish semantic meaning. Other datasets require independent metadata
+   verification or offset-to-angle conversion.
 
 7. **Approximate depth assumptions.** Fluid-substitution demonstrations map
    time samples to nominal depth increments. Production rock physics requires a
