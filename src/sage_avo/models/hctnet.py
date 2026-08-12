@@ -6,6 +6,7 @@ low-frequency priors, inputs, splits, and evaluation masks.
 
 from __future__ import annotations
 
+import torch
 from torch import Tensor, nn
 import torch.nn.functional as F
 

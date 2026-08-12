@@ -3,13 +3,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-import sys
-
 import numpy as np
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY / "src"))
 
 from sage_avo.evaluation import elastic_metrics
 from sage_avo.forward import ForwardConfig, forward_avo_three_band, shuey_intercept_gradient

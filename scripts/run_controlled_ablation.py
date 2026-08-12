@@ -7,13 +7,11 @@ import argparse
 import json
 from pathlib import Path
 import shutil
-import sys
-
-REPOSITORY = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY / "src"))
 
 from sage_avo.config import load_config
 from sage_avo.experiments.dataset import prepare_controlled_dataset
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 LEARNED_VARIANTS = ("full", "no_gnn", "no_rgt", "no_physics")
 ALL_VARIANTS = ("low_prior",) + LEARNED_VARIANTS

@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 try:
-    from .publication import generate_all_publication_figures
+    from .publication import generate_all_publication_figures as generate_all_publication_figures
 
     __all__.append("generate_all_publication_figures")
 except ImportError:

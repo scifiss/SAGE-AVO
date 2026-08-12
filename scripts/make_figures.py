@@ -5,14 +5,12 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import sys
 
 import pandas as pd
 
-REPOSITORY = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPOSITORY / "src"))
-
 from sage_avo.visualization import plot_ablation_metrics
+
+REPOSITORY = Path(__file__).resolve().parents[1]
 
 
 def parse_args() -> argparse.Namespace:
