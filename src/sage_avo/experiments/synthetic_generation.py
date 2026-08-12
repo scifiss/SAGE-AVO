@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import joblib
 import numpy as np
 
 from sage_avo.forward import AngleBand, ForwardConfig, forward_avo_dense, forward_avo_madagascar
@@ -48,6 +47,14 @@ def load_stage01_background(
     version: str = "v001",
 ) -> tuple[dict[str, np.ndarray], Any, dict[str, str]]:
     """Load the canonical Stage-01 artifact contract and reservoir RF model."""
+    try:
+        import joblib
+    except ImportError as error:
+        raise ImportError(
+            "Loading Stage-01 field-conditioned models requires the 'field' dependencies; "
+            "install sage-avo with `pip install -e '.[field]'`."
+        ) from error
+
     directories = _stage01_directories(work_data_root, dataset_id, version)
     arrays: dict[str, np.ndarray] = {}
     hashes: dict[str, str] = {}
