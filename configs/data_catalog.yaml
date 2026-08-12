@@ -1,0 +1,12 @@
+schema_version: 1
+datasets:
+  gom:
+    synthetic: [syn_v001_clean, syn_v002_fieldcal_noiseRMO]
+    datasets: [ds_v001_syn2d_ang3_p50x100_s10x25_sliceHoldout]
+  sleipner:
+    datasets: [ds_v001_field2d_ang3_p50x100_s10x25_blockHoldout]
+  s01data:
+    canonical_structure_version: v001
+    versions: [v001]
+    notes:
+      v001: Canonical field structure and elastic-background artifact contract.

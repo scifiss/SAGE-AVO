@@ -1,0 +1,48 @@
+project:
+  name: SAGE-AVO
+  seed: 12345
+
+sampling:
+  dt_seconds: 0.004
+  patch_shape: [50, 100]
+  patch_scales: [[40, 80], [50, 100], [64, 128]]
+  split_fractions: [0.70, 0.20, 0.10]
+
+avo:
+  angles_degrees: {start: 3, stop: 45, step: 1}
+  representative_angles_degrees: [10, 24, 38]
+  bands_degrees:
+    near: [3, 17]
+    mid: [18, 31]
+    far: [32, 45]
+  wavelet_hz: 14.0
+  mute:
+    start_angle_degrees: 30.0
+    end_angle_degrees: 45.0
+    start_time_seconds: 0.0
+    end_time_seconds: 0.1
+    taper_samples: 5
+
+prior:
+  cutoff_hz: 2.0
+  lateral_sigma_ratio: 2.0
+
+model:
+  hidden_channels: 64
+  graph_layers: 2
+  graph_heads: 4
+  max_rgt_shift_samples: 3
+  classes: 3
+
+training:
+  epochs: 120
+  batch_size: 8
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  sample_steps: 20
+  loss_weights:
+    flow: 1.0
+    segmentation: 0.3
+    physics: 0.5
+    structure: 0.5

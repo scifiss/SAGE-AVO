@@ -1,0 +1,84 @@
+schema_version: 1
+experiment:
+  name: controlled_ablation_v1
+  description: Fair five-condition benchmark of incremental value beyond a supplied elastic prior.
+  seed: 12345
+  output_root: results/experiments
+
+dataset:
+  version: public_field_conditioned_synthetic_v1
+  realization_count: 100
+  split_fractions: [0.70, 0.20, 0.10]
+  grid_shape: [128, 160]
+  dt_seconds: 0.004
+  noise_std_fraction: 0.03
+  generator_note: Diverse members of one procedural field-conditioned family; not geological universality.
+
+prior:
+  source: gaussian_filter_of_synthetic_truth
+  truth_derived: true
+  cutoff_hz: 2.0
+  sigma_constant: 0.133
+  lateral_sigma_ratio: 2.0
+  boundary_mode: reflect
+  note: This is an oracle low-frequency prior; the benchmark measures prior refinement.
+
+avo:
+  angles_degrees: {start: 3, stop: 45, step: 1}
+  bands_degrees:
+    near: [3, 17]
+    mid: [18, 31]
+    far: [32, 45]
+  wavelet_hz: 14.0
+  wavelet_samples: 81
+  front_mute: true
+
+patches:
+  shape: [50, 100]
+  train_per_realization: 100
+  validation_per_realization: 40
+  stride: [25, 50]
+  interpolation: none
+
+model:
+  hidden_channels: 64
+  graph_layers: 2
+  graph_heads: 4
+  max_rgt_shift_samples: 3
+  classes: 3
+  variants:
+    full: {graph_mode: rgt, physics_weight: 0.5}
+    no_gnn: {graph_mode: none, physics_weight: 0.5}
+    no_rgt: {graph_mode: cartesian, physics_weight: 0.5}
+    no_physics: {graph_mode: rgt, physics_weight: 0.0}
+
+training:
+  epochs: 120
+  batch_size: 8
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  validation_sample_every: 5
+  validation_sample_batches: 4
+  sample_steps_validation: 20
+  sample_steps_test: 100
+  checkpoint_criterion: mean_normalized_elastic_rmse_minus_0.1_miou
+  loss_weights:
+    flow: 1.0
+    full_property: 0.2
+    segmentation: 0.3
+    physics: 0.5
+    structure: 0.5
+
+evaluation:
+  properties: [vp, vs, density]
+  metrics: [rmse, mae, r2, ssim]
+  segmentation_metrics: [miou, macro_dice, class_iou]
+  bootstrap_repetitions: 2000
+  bootstrap_confidence: 0.95
+  representative_rule: median_full_model_vp_rmse
+  pooled_domain: full_test_realizations
+
+hardware:
+  preferred_device: cuda
+  deterministic_algorithms: true

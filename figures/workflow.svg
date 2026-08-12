@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="230" viewBox="0 0 1200 230" role="img" aria-labelledby="title description">
+  <title id="title">SAGE-AVO end-to-end workflow</title>
+  <description id="description">Field conditioning, synthetic AVO, structure-aware learning, elastic outputs, and conservative quality control.</description>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#496078"/></marker>
+    <style>.box{rx:14;stroke-width:2}.label{font:600 17px sans-serif;fill:#17212b;text-anchor:middle}.sub{font:13px sans-serif;fill:#33475b;text-anchor:middle}.arrow{stroke:#496078;stroke-width:3;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1200" height="230" fill="#f7f9fb"/>
+  <g transform="translate(20 55)"><rect class="box" width="170" height="110" fill="#dbeafe" stroke="#3b82f6"/><text class="label" x="85" y="38">Field conditioning</text><text class="sub" x="85" y="65">seismic · wells</text><text class="sub" x="85" y="85">dip · RGT · priors</text></g>
+  <line class="arrow" x1="195" y1="110" x2="225" y2="110"/>
+  <g transform="translate(230 55)"><rect class="box" width="170" height="110" fill="#dcfce7" stroke="#22c55e"/><text class="label" x="85" y="38">Synthetic geology</text><text class="sub" x="85" y="65">folds · faults · facies</text><text class="sub" x="85" y="85">fluid substitution</text></g>
+  <line class="arrow" x1="405" y1="110" x2="435" y2="110"/>
+  <g transform="translate(440 55)"><rect class="box" width="170" height="110" fill="#fef3c7" stroke="#f59e0b"/><text class="label" x="85" y="38">AVO synthesis</text><text class="sub" x="85" y="65">exact Zoeppritz</text><text class="sub" x="85" y="85">near · mid · far</text></g>
+  <line class="arrow" x1="615" y1="110" x2="645" y2="110"/>
+  <g transform="translate(650 55)"><rect class="box" width="170" height="110" fill="#ede9fe" stroke="#8b5cf6"/><text class="label" x="85" y="38">SAGE-AVO</text><text class="sub" x="85" y="65">CNN + RGT graph</text><text class="sub" x="85" y="85">physics regularization</text></g>
+  <line class="arrow" x1="825" y1="110" x2="855" y2="110"/>
+  <g transform="translate(860 55)"><rect class="box" width="140" height="110" fill="#fee2e2" stroke="#ef4444"/><text class="label" x="70" y="38">Outputs</text><text class="sub" x="70" y="65">Vp · Vs · density</text><text class="sub" x="70" y="85">facies / CO₂</text></g>
+  <line class="arrow" x1="1005" y1="110" x2="1035" y2="110"/>
+  <g transform="translate(1040 55)"><rect class="box" width="140" height="110" fill="#e2e8f0" stroke="#64748b"/><text class="label" x="70" y="38">QC</text><text class="sub" x="70" y="65">ablations · wells</text><text class="sub" x="70" y="85">forward consistency</text></g>
+</svg>

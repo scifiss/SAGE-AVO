@@ -1,0 +1,71 @@
+dataset:
+  id: s01data
+  version: v001
+
+segy:
+  angle_header: offset
+  # Verified for the local S01 export: the SEG-Y offset word contains integer
+  # incidence-angle bins 3..45 degrees. This is not a general SEG-Y assumption.
+  angle_header_semantics: incidence_angle_degrees
+  time_window_ms: [2000.0, 3200.0]
+  midpoint_y_max: 160000.0
+  bands_degrees:
+    near: [3.0, 17.0]
+    mid: [18.0, 31.0]
+    far: [32.0, 45.0]
+  robust_clip_percentiles: [1.0, 99.0]
+  chunk_traces: 32768
+
+structure:
+  gaussian_sigma: [1.0, 0.0]
+  dip_order: 2
+  dip_iterations: 14
+  dip_rect: [6, 14, 1]
+  structure_radius: 2
+  structure_order: 2
+  structure_epsilon: 0.01
+  rgt_epsilon: 0.08
+  monotonicity_tolerance: -0.001
+  max_fraction_bad: 0.005
+  monotonic_repair_minimum_step: 0.000001
+
+horizons:
+  projection_max_distance_m: 50.0
+  depth_time_distance_scale_m: 1500.0
+  rgt_diagnostic_max_rmse_ms: 30.0
+  # The Petrel depth->time surfaces are retained as interpretation provenance.
+  # Property/elastic grids use seismic-conformed constant-RGT surfaces so the
+  # modeled layers remain consistent with the seismic/RGT structural framework.
+  modeling_surface_policy: seismic_conformed_constant_rgt
+
+wheeler:
+  n_rgt: 520
+  lateral_distance_scale_m: 1500.0
+  smooth_sigma: [2.0, 8.0]
+  delta_interpretation: shaliness
+  sand_probability_definition: 1-delta
+
+horizon_conditioning:
+  # Local coordinate s=(tau-tau_T6)/(tau_T7-tau_T6), so interpreted T6 and
+  # T7 are honored exactly without pretending either is a constant-RGT event.
+  n_strat: 201
+  lateral_distance_scale_m: 1000.0
+  max_support_distance_m: 2000.0
+  minimum_support_confidence: 0.10
+  minimum_interval_ms: 40.0
+  minimum_rgt_separation: 0.001
+  rgt_steering_weight: 0.35
+  coordinate_smooth_sigma: [1.5, 8.0]
+  smooth_sigma: [2.0, 6.0]
+  composite_edge_fraction: 0.15
+
+elastic_model:
+  features: [DELTA, PORO, RGT]
+  targets: [VP, VS, RHOB]
+  validation: leave_one_well_out
+  n_estimators: 150
+  min_samples_leaf: 5
+  seed: 12345
+
+artifacts:
+  layout: canonical_data_layout

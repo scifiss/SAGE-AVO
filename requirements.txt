@@ -1,0 +1,12 @@
+# Public scientific core
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+matplotlib>=3.7
+PyYAML>=6.0
+
+# SAGE-AVO model and notebooks
+torch>=2.1
+torch-geometric>=2.5
+jupyterlab>=4.0
+nbformat>=5.9
