@@ -14,4 +14,3 @@ No HCTNet comparison result is claimed in the current SAGE-AVO release. I plan t
 
 Yang, Liuqing; Fomel, Sergey; Wang, Shoudong; Li, Wenjin; Meng, Jinyu; Li, Chao; and Chen, Yangkang (2025). **HCTNet: Robust prestack seismic inversion using a hybrid convolutional transformer.** *Geophysics*, 90(4), N17-N32. DOI: 10.1190/geo2024-0015.1.
 
-[Download the revised CONTRIBUTORS.md](sandbox:/mnt/data/CONTRIBUTORS.md)
