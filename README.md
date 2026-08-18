@@ -13,12 +13,11 @@ residual transport, and differentiable seismic-consistency constraints.
 
 ## Release scope
 
-Version 0.1 provides the complete five-stage research workflow: field structure
-and elastic-background construction, field-conditioned geological realization
-generation, exact-physics AVO synthesis, leakage-safe ML dataset construction,
-controlled SAGE-AVO training, and evaluation/field-deployment orchestration.
-Field inputs and generated field artifacts remain private. Trained SAGE-AVO
-checkpoints and controlled benchmark results are outside this release.
+## Release scope
+
+Version 0.1 provides the five-stage research implementation and orchestration: field structure and elastic-background construction, field-conditioned geological realization generation, exact-physics AVO synthesis, leakage-safe ML dataset construction, controlled SAGE-AVO training, and evaluation/field-deployment orchestration. SAGE-AVO has also been applied to whole-section field data, with the resulting elastic-property sections assessed through structural continuity, nearby-well consistency, and forward-modeled AVA agreement. Proprietary field inputs, trained checkpoints, generated field artifacts, and controlled benchmark outputs are not distributed in this public release.
+
+The bounded validation suite passes for the shared forward operator, leakage-safe dataset construction, checkpointing, notebook execution, and CUDA training. The fluid-substitution module remains preproduction: full-corpus generation requires a reviewed pressure, temperature, salinity, equation-of-state, and fluid-mixing validation manifest. Field inference additionally requires a passing amplitude, polarity, phase, wavelet, per-band scaling, distribution-overlap, and low-frequency-prior calibration manifest. This release does not report final production or field-performance results.
 
 ### Stage 01 structure-model contract
 
@@ -201,6 +200,10 @@ generation and field deployment require authorized data. Madagascar-based
 forward-model validation additionally requires a local Madagascar installation.
 
 ## Field deployment and QC
+
+Field deployment is an established component of SAGE-AVO. The whole-section application produces Vp, Vs, and density sections and evaluates them through structural continuity, nearby-well consistency, bserved-versus-forward-modeled AVA agreement, residual analysis, and model/prior sensitivity. Because dense field elastic ground truth is unavailable, these are consistency-based field-QC measures rather than pixelwise accuracy claims.
+
+The current implementation also records amplitude, polarity, phase, wavelet, per-band scaling, and prior diagnostics to make future field reruns more traceable and reproducible.
 
 Field evaluation reports:
 
