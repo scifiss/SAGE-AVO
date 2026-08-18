@@ -12,8 +12,9 @@ import pandas as pd
 import torch
 
 from sage_avo.forward.shuey import shuey_intercept_gradient
-from sage_avo.models.variants import build_sage_avo_variant
+from sage_avo.models.variants import build_sage_avo_variant, sage_avo_model_kwargs
 from sage_avo.structure.graph import GraphEdges
+from sage_avo.training.checkpoints import load_checkpoint
 
 from .figures import plot_graph_mechanism, plot_inversion_comparison, plot_training_diversity
 
@@ -113,18 +114,18 @@ def controlled_ablation_figure(
     _save(figure, figures / "controlled_ablation")
 
 
-def _load_full_model(config: dict[str, Any], checkpoint: Path, device: torch.device) -> torch.nn.Module:
-    model_config = config["model"]
+def _load_full_model(
+    config: dict[str, Any],
+    checkpoint: Path,
+    device: torch.device,
+    normalization: dict[str, list[float]],
+) -> torch.nn.Module:
     model = build_sage_avo_variant(
         "full",
-        hidden_channels=int(model_config["hidden_channels"]),
-        graph_layers=int(model_config["graph_layers"]),
-        graph_heads=int(model_config["graph_heads"]),
-        max_rgt_shift=int(model_config["max_rgt_shift_samples"]),
-        classes=int(model_config["classes"]),
+        **sage_avo_model_kwargs(config),
     ).to(device)
-    payload = torch.load(checkpoint, map_location=device, weights_only=False)
-    model.load_state_dict(payload["model_state"], strict=True)
+    model.set_norm_stats(normalization)
+    load_checkpoint(checkpoint, model, map_location=device)
     model.eval()
     return model
 
@@ -155,7 +156,10 @@ def graph_mechanism_figure(
     low_normalized = (low[(slice(None),) + spatial] - y_mean) / y_std
     full_normalized = (full[(slice(None),) + spatial] - y_mean) / y_std
     model = _load_full_model(
-        config, experiment / "runs" / "full" / "best_sampling.pt", device
+        config,
+        experiment / "runs" / "full" / "best_whole_realization.pt",
+        device,
+        normalization,
     )
     model_output = model(
         torch.from_numpy(full_normalized[None]).to(device),
@@ -164,9 +168,16 @@ def graph_mechanism_figure(
         torch.from_numpy(low_normalized[None]).to(device),
         torch.from_numpy(rgt[spatial][None].astype(np.float32)).to(device),
     )
-    edge_index = model_output.edge_indices[0].cpu().numpy()
-    edge_weights = model_output.edge_weights[0].cpu().numpy()
-    edges = GraphEdges(edge_index[0], edge_index[1], edge_weights)
+    base_edge_index = model_output.edge_indices[0].cpu().numpy()
+    edge_attributes = model_output.edge_weights[0].cpu().numpy()
+    attention_edge_index = model_output.attention_edge_indices[0].cpu().numpy()
+    attention = model_output.attention_weights[0].cpu().numpy()
+    embeddings = model_output.embeddings[0].cpu().numpy()
+    edges = GraphEdges(
+        attention_edge_index[0],
+        attention_edge_index[1],
+        attention,
+    )
     _, gradient = shuey_intercept_gradient(avo_normalized)
     figure = plot_graph_mechanism(
         avo_normalized,
@@ -178,10 +189,29 @@ def graph_mechanism_figure(
         truth[0][spatial],
     )
     figure.suptitle(
-        f"Graph mechanism — central training-scale patch from test realization {realization_id}",
+        "Graph mechanism and learned TransformerConv attention — "
+        f"central patch from test realization {realization_id}",
         y=1.01,
     )
     _save(figure, figures / "graph_mechanism_and_benefit")
+    mechanism = {
+        "realization_id": int(realization_id),
+        "normalized_model_forward": True,
+        "base_edge_count": int(base_edge_index.shape[1]),
+        "edge_attribute_minimum": float(edge_attributes.min()),
+        "edge_attribute_maximum": float(edge_attributes.max()),
+        "attention_edge_count": int(attention_edge_index.shape[1]),
+        "attention_minimum": float(attention.min()),
+        "attention_maximum": float(attention.max()),
+        "embedding_shape": list(embeddings.shape),
+        "display_rule": (
+            "strongest 15 percent of learned final-layer mean-head attention; "
+            "all graph edges remain active during message passing"
+        ),
+    }
+    (figures / "graph_mechanism_forward_contract.json").write_text(
+        json.dumps(mechanism, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
 
 def synthetic_diversity_figure(dataset: Path, figures: Path) -> None:

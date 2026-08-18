@@ -1,0 +1,112 @@
+schema_version: 3
+forward_model_config: forward_model_v003.yaml
+
+stage:
+  name: field_conditioned_synthetic_avo_v0031_fluid_corrected
+  seed: 12345
+  geology_realization_count: 100
+  observation_variants_per_geology: 1
+  realization_count: 100
+  realization_id_offset: 3200000
+
+inputs:
+  dataset_id: s01data
+  # The Stage-01 v003 contract keeps raw, repaired, and refined RGT separate.
+  structure_version: v003
+  elastic_model_directory: derived/rf_models_v003
+
+geology:
+  fold_probability: 0.8
+  fold_amplitude_samples: [10.0, 30.0]
+  fold_cycles: [0.3, 3.0]
+  secondary_fold_amplitude_samples: [2.0, 8.0]
+  secondary_fold_cycles: [2.0, 4.0]
+  maximum_faults: 7
+  fault_throw_samples: [-40.0, 40.0]
+  fault_dip_samples_per_trace: [-0.5, 0.5]
+  sand_heterogeneity_std: [0.01, 0.03]
+  porosity_heterogeneity_std: [0.003, 0.012]
+  heterogeneity_sigma_samples: [1.0, 3.0]
+  elastic_heterogeneity:
+    enabled: true
+    mode: correlated_bulk_shear_density
+    sigma_samples: [3.0, 10.0]
+    bulk_fraction_std: 0.025
+    shear_fraction_std: 0.018
+    density_fraction_std: 0.004
+  sand_facies_probability_threshold: 0.30
+  preserve_regional_background_outside_reservoir: true
+
+fluid_substitution:
+  enabled: true
+  mode: calibrated_differential_gassmann
+  available_modes:
+    - calibrated_differential_gassmann
+    - constrained_local_gassmann
+    - local_inverse_gassmann
+    - matched_hm_delta
+    - legacy_absolute_hm
+  legacy_absolute_hm_enabled: false
+  legacy_local_inverse_gassmann_production_valid: false
+  calibration_id: v0031_b75a264c5f1675d4
+  calibration_artifact: derived/fluid_models_v0031/calibrated_dry_frame.npz
+  fluid_property_validation_artifact: derived/fluid_models_v0031/fluid_property_validation.json
+  fluid_property_validation_required: true
+  plume_count: [1, 2]
+  plume_lateral_radius_samples: [15.0, 40.0]
+  plume_vertical_radius_samples: [5.0, 15.0]
+  minimum_sand_thickness_samples: 7
+  co2_saturation: [0.30, 0.80]
+  saturation_correlation_sigma_samples: [3.0, 8.0]
+  saturation_variation_fraction: 0.15
+  compatibility_margin: 0.995
+  vp_bounds_m_s: [1200.0, 6500.0]
+  vs_bounds_m_s: [500.0, 4000.0]
+  density_bounds_g_cc: [1.5, 3.2]
+  critical_porosity: 0.36
+  coordination_factor: 2.8
+  quartz_bulk_modulus_gpa: 39.0
+  clay_bulk_modulus_gpa: 21.0
+  quartz_shear_modulus_gpa: 45.0
+  clay_shear_modulus_gpa: 6.85
+  quartz_density_g_cc: 2.65
+  clay_density_g_cc: 2.60
+  overburden_density_kg_m3: 1600.0
+  gravity_m_s2: 9.8
+  depth_origin_m: 2000.0
+  depth_increment_m: 4.0
+  brine_bulk_modulus_gpa: 2.20
+  co2_bulk_modulus_gpa: 0.10
+  brine_density_g_cc: 1.03
+  co2_density_g_cc: 0.65
+  brie_exponent: 3.0
+
+observation_perturbations:
+  enabled: true
+  seed_offset: 4000000
+  white_noise_fraction_by_band: [0.020, 0.025, 0.035]
+  colored_noise_fraction_by_band: [0.010, 0.015, 0.020]
+  colored_noise_sigma_samples: [2.0, 4.0]
+  coherent_noise_fraction: 0.010
+  coherent_frequency_cycles_per_sample: [0.01, 0.05]
+  coherent_slope_samples_per_trace: [-0.2, 0.2]
+  gain_range_by_band:
+    - [0.95, 1.05]
+    - [0.95, 1.05]
+    - [0.90, 1.05]
+  phase_degrees_by_band:
+    - [-5.0, 5.0]
+    - [-5.0, 5.0]
+    - [-8.0, 8.0]
+  polarity_flip_probability_by_band: [0.0, 0.0, 0.0]
+  far_angle_weakening_range: [0.75, 1.0]
+  far_angle_missing_probability: 0.05
+
+structure_qc:
+  recalculate_pwd_dip: true
+  recalculate_pwd_rgt: false
+  graph_rgt_channel: coherently_warped_stage01_rgt
+
+outputs:
+  version: v0031_production100_fluid_corrected
+  directory: synthetic/v0031_production100_fluid_corrected/realizations

@@ -1,17 +1,46 @@
-schema_version: 1
+schema_version: 2
 
 experiment:
-  name: sage_avo_s01_v001
+  name: sage_avo_s01_v002_production
   seed: 12345
-  output_root: results/experiments/sage_avo_s01_v001
+  output_root: results/experiments/sage_avo_s01_v002_production
 
 dataset:
   id: s01data
-  directory: datasets/ds_v001_realization_split_multiscale
+  directory: datasets/ds_v002_production100_multiscale
 
 patches:
   shape: [50, 100]
   stride: [10, 25]
+
+capabilities:
+  conditional_straight_path_flow: {implemented: true, enabled: true}
+  rgt_transformerconv_graph: {implemented: true, enabled: true}
+  exact_zoeppritz_training_loss: {implemented: true, enabled: true}
+  physics_guided_sampling: {implemented: true, enabled: false}
+  contrastive_loss: {implemented: true, enabled: false}
+  adaptive_task_weighting: {implemented: true, enabled: false}
+  weighted_patch_sampling: {implemented: true, enabled: true}
+  geological_and_avo_augmentation: {implemented: true, enabled: true}
+  dual_checkpoint_selection: {implemented: true, enabled: true}
+
+reference_training_contract:
+  identifier: sage_avo_s01_v002
+  epochs: 120
+  learning_rate: 0.0003
+  batch_size: 8
+  realization_count: 100
+  patches_per_realization: 200
+  realization_split_fractions: [0.70, 0.20, 0.10]
+  patch_contract_version: v003
+  validation_time_grid: [0.2, 0.5, 0.8]
+  physics_guidance_scale: 0.0
+  contrastive_weight: 0.0
+  adaptive_task_weighting: false
+  production_angle_bands_degrees:
+    near: [3.0, 17.0]
+    mid: [17.0, 31.0]
+    far: [31.0, 45.0]
 
 model:
   name: SAGE-AVO
@@ -23,6 +52,8 @@ model:
   graph_heads: 4
   max_rgt_shift_samples: 3
   classes: 3
+  # These are compact-feature coordinates, not dense forward-model angles.
+  # Arithmetic midpoints of the inclusive 3–17, 17–31 and 31–45 bands.
   representative_angles_degrees: [10.0, 24.0, 38.0]
   variants:
     full: {graph_mode: rgt, physics_weight: 0.5}
@@ -33,21 +64,93 @@ model:
 training:
   epochs: 120
   batch_size: 8
-  learning_rate: 0.00008
+  learning_rate: 0.0003
   weight_decay: 0.0001
   gradient_clip: 1.0
   scheduler: cosine_annealing
-  validation_sample_every: 2
+  scheduler_eta_min: 0.000001
+  validation_time_grid: [0.2, 0.5, 0.8]
+  validation_sample_every: 1
   validation_sample_batches: 16
-  sample_steps_validation: 12
+  sample_steps_validation: 20
   sample_steps_test: 100
   checkpoint_criterion: mean_normalized_elastic_rmse_minus_0.1_miou
+  class_weight_foreground_boost: 1.15
+
   loss_weights:
-    flow: 1.0
-    full_property: 0.2
-    segmentation: 0.3
-    physics: 0.5
-    structure: 0.5
+    inversion: 1.0
+    flow_velocity: 0.65
+    full_property: 0.20
+    ssim_initial: 0.15
+    segmentation: 0.30
+    segmentation_cross_entropy: 1.0
+    segmentation_dice: 0.50
+    physics: 0.50
+    structure: 0.50
+    density_initial: 2.0
+
+  curriculum:
+    density_weight: {start: 2.0, end: 3.5}
+    ssim_weight: {start: 0.15, end: 0.05}
+    physics_multiplier: {start: 1.0, end: 0.70}
+    structure_multiplier: {start: 1.0, end: 0.75}
+
+  weighted_patch_sampling:
+    implemented: true
+    enabled: true
+    # The persisted plume_boost key weights every foreground class (segmentation > 0).
+    foreground_boost: 5.0
+    structure_boost: 2.5
+    avo_gradient_boost: 2.0
+    foreground_fraction_threshold: 0.01
+    upper_quantile: 0.98
+    replacement: true
+
+  augmentation:
+    implemented: true
+    enabled: true
+    horizontal_flip_probability: 0.50
+    avo_gain_probability: 0.40
+    avo_gain_range: [0.98, 1.02]
+    avo_noise_probability: 0.35
+    avo_noise_std_normalized: 0.01
+    scale_jitter_implemented: false
+
+  contrastive_loss:
+    implemented: true
+    enabled: false
+    mode: legacy_self_instance
+    temperature: 0.07
+    max_samples: 1024
+    weight: 0.0
+
+  adaptive_task_weighting:
+    implemented: true
+    enabled: false
+    method: homoscedastic_log_variance
+
+  physics_forward:
+    operator: exact_pp_zoeppritz
+    angles_degrees: {start: 3.0, stop: 45.0, step: 1.0}
+    bands_degrees:
+      - [3.0, 17.0]
+      - [17.0, 31.0]
+      - [31.0, 45.0]
+    wavelet_hz: 14.0
+    wavelet_samples: 81
+    dt_seconds: 0.004
+    front_mute:
+      enabled: true
+      start: [30.0, 0.0]
+      end: [45.0, 0.1]
+      taper_samples: 5
+
+  physics_guided_sampling:
+    implemented: true
+    enabled: false
+    guidance_scale: 0.0
+    start_fraction: 0.3333333333333333
+    interval_steps: 3
 
 evaluation:
   properties: [vp, vs, density]

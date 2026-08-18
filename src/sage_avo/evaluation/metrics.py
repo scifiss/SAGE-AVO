@@ -53,9 +53,21 @@ def ssim_2d(
     c1, c2 = (0.01 * data_range) ** 2, (0.03 * data_range) ** 2
     mean_x = gaussian_filter(predicted, sigma=sigma, mode="reflect")
     mean_y = gaussian_filter(observed, sigma=sigma, mode="reflect")
-    variance_x = gaussian_filter(predicted**2, sigma=sigma, mode="reflect") - mean_x**2
-    variance_y = gaussian_filter(observed**2, sigma=sigma, mode="reflect") - mean_y**2
+    # The difference-of-moments form can be slightly negative for smooth fields
+    # with a large physical-unit offset (for example Vp around 3,000 m/s).
+    # Clamp round-off variance and enforce the covariance bound so SSIM remains
+    # finite and in its mathematical [-1, 1] range.
+    variance_x = np.maximum(
+        gaussian_filter(predicted**2, sigma=sigma, mode="reflect") - mean_x**2,
+        0.0,
+    )
+    variance_y = np.maximum(
+        gaussian_filter(observed**2, sigma=sigma, mode="reflect") - mean_y**2,
+        0.0,
+    )
     covariance = gaussian_filter(predicted * observed, sigma=sigma, mode="reflect") - mean_x * mean_y
+    covariance_limit = np.sqrt(variance_x * variance_y)
+    covariance = np.clip(covariance, -covariance_limit, covariance_limit)
     numerator = (2 * mean_x * mean_y + c1) * (2 * covariance + c2)
     denominator = (mean_x**2 + mean_y**2 + c1) * (variance_x + variance_y + c2)
     similarity = numerator / np.maximum(denominator, 1e-12)

@@ -19,6 +19,52 @@ def file_sha256(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def load_frozen_source_reference(
+    private_artifact_root: str | Path,
+    *,
+    pointer_name: str = "v003_production_current.json",
+) -> dict[str, str]:
+    """Load and verify a named local code snapshot required by production."""
+    if Path(pointer_name).name != pointer_name:
+        raise ValueError("pointer_name must be a filename, not a path")
+    pointer = Path(private_artifact_root) / "source_freezes" / pointer_name
+    if not pointer.exists():
+        raise FileNotFoundError(
+            "Production requires a frozen source pointer at "
+            f"{pointer}. The production source-freeze utility creates this pointer."
+        )
+    payload = json.loads(pointer.read_text(encoding="utf-8"))
+    if payload.get("status") != "frozen":
+        raise ValueError(
+            f"Frozen source pointer is not production-approved: status={payload.get('status')!r}"
+        )
+    required = {
+        "snapshot_id",
+        "source_manifest_path",
+        "source_manifest_sha256",
+        "archive_path",
+        "archive_sha256",
+        "git_head",
+    }
+    missing = sorted(required.difference(payload))
+    if missing:
+        raise ValueError(f"Frozen source pointer is missing keys: {missing}")
+    manifest_path = Path(payload["source_manifest_path"])
+    archive_path = Path(payload["archive_path"])
+    if file_sha256(manifest_path) != payload["source_manifest_sha256"]:
+        raise ValueError("Frozen source manifest SHA-256 verification failed")
+    if file_sha256(archive_path) != payload["archive_sha256"]:
+        raise ValueError("Frozen source archive SHA-256 verification failed")
+    if payload["snapshot_id"] != payload["source_manifest_sha256"]:
+        raise ValueError("Frozen snapshot ID must equal the source-manifest SHA-256")
+    return {
+        "snapshot_id": str(payload["snapshot_id"]),
+        "source_manifest_sha256": str(payload["source_manifest_sha256"]),
+        "archive_sha256": str(payload["archive_sha256"]),
+        "git_head": str(payload["git_head"]),
+    }
+
+
 def git_commit(repository: str | Path) -> str | None:
     """Return the local commit without requiring the repository to be initialized."""
     result = subprocess.run(

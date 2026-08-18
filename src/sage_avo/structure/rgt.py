@@ -1,7 +1,7 @@
 """Lightweight relative-geologic-time utilities.
 
 Production dip estimation may use PySeistr/PWD. These functions provide a
-dependency-light public implementation for testing and demonstrations.
+dependency-light numerical implementation for validation and operator tests.
 """
 
 from __future__ import annotations
@@ -41,6 +41,15 @@ class PwdDipResult:
     def validate(self) -> None:
         if self.dip.ndim != 2 or self.structure_oriented_seismic.shape != self.dip.shape:
             raise ValueError("PWD dip arrays must share one [time, cdp] shape")
+
+
+@dataclass(frozen=True)
+class HorizonRgtRefinement:
+    """Optional regularized refinement, kept separate from raw/repaired RGT."""
+
+    rgt: np.ndarray
+    horizon_reference_levels: dict[str, float]
+    qc: dict[str, object]
 
 
 def _pava_1d(values: np.ndarray) -> np.ndarray:
@@ -108,6 +117,144 @@ def monotonicity_report(rgt: np.ndarray, tolerance: float = -1e-3) -> dict[str, 
         "fraction_bad": float(bad.sum() / max(finite.sum(), 1)),
         "worst_step": float(np.nanmin(steps)) if finite.any() else float("nan"),
     }
+
+
+def _horizon_residuals_ms(
+    rgt: np.ndarray,
+    time_ms: np.ndarray,
+    horizons_ms: dict[str, np.ndarray],
+    references: dict[str, float],
+) -> dict[str, dict[str, float]]:
+    output: dict[str, dict[str, float]] = {}
+    for name, horizon in horizons_ms.items():
+        picked = np.array(
+            [
+                np.interp(references[name], rgt[:, column], time_ms)
+                for column in range(rgt.shape[1])
+            ]
+        )
+        residual = picked - np.asarray(horizon, dtype=float)
+        output[name] = {
+            "rmse_ms": float(np.sqrt(np.mean(residual**2))),
+            "median_absolute_ms": float(np.median(np.abs(residual))),
+            "maximum_absolute_ms": float(np.max(np.abs(residual))),
+        }
+    return output
+
+
+def refine_rgt_with_horizons(
+    repaired_rgt: np.ndarray,
+    time_ms: np.ndarray,
+    horizons_ms: dict[str, np.ndarray],
+    *,
+    enabled: bool = True,
+    horizon_weight: float = 0.35,
+    lateral_sigma_traces: float = 8.0,
+    vertical_sigma_samples: float = 1.5,
+    maximum_correction_rgt: float = 0.05,
+    minimum_step: float = 1e-6,
+) -> HorizonRgtRefinement:
+    """Nudge a monotonic RGT toward interpreted surfaces without forcing ties.
+
+    The correction is a laterally regularized interpolation of horizon-level
+    RGT residuals, anchored to zero at the top and bottom of the image.  The
+    correction is explicitly shrunk and capped before a final isotonic repair.
+    Raw PWD RGT and its first monotonic repair remain separate artifacts.
+    """
+    base = np.asarray(repaired_rgt, dtype=float)
+    times = np.asarray(time_ms, dtype=float)
+    if base.ndim != 2 or times.shape != (base.shape[0],):
+        raise ValueError("RGT must be [time, trace] and time_ms must match its first axis")
+    if not np.isfinite(base).all() or not np.all(np.diff(times) > 0.0):
+        raise ValueError("RGT/time inputs must be finite with increasing time")
+    if not horizons_ms:
+        raise ValueError("At least one horizon is required")
+    for name, horizon in horizons_ms.items():
+        values = np.asarray(horizon, dtype=float)
+        if values.shape != (base.shape[1],) or not np.isfinite(values).all():
+            raise ValueError(f"Horizon {name!r} must be finite with one value per trace")
+    if not 0.0 <= horizon_weight <= 1.0:
+        raise ValueError("horizon_weight must lie between zero and one")
+    if maximum_correction_rgt <= 0.0:
+        raise ValueError("maximum_correction_rgt must be positive")
+
+    references = {
+        name: float(
+            np.median(
+                [
+                    np.interp(horizon[column], times, base[:, column])
+                    for column in range(base.shape[1])
+                ]
+            )
+        )
+        for name, horizon in horizons_ms.items()
+    }
+    pre = _horizon_residuals_ms(base, times, horizons_ms, references)
+    if not enabled or horizon_weight == 0.0:
+        return HorizonRgtRefinement(
+            base.astype(np.float32, copy=True),
+            references,
+            {
+                "enabled": False,
+                "pre_horizon_residuals": pre,
+                "post_horizon_residuals": pre,
+                "adjustment_rmse": 0.0,
+                "adjustment_max_absolute": 0.0,
+                "monotonicity": monotonicity_report(base),
+            },
+        )
+
+    rows = np.arange(base.shape[0], dtype=float)
+    correction = np.zeros_like(base)
+    horizon_items = sorted(
+        horizons_ms.items(), key=lambda item: float(np.median(item[1]))
+    )
+    for column in range(base.shape[1]):
+        anchor_rows = [0.0]
+        anchor_corrections = [0.0]
+        for name, horizon in horizon_items:
+            row = float(np.interp(horizon[column], times, rows))
+            observed = float(np.interp(horizon[column], times, base[:, column]))
+            anchor_rows.append(row)
+            anchor_corrections.append(references[name] - observed)
+        anchor_rows.append(float(base.shape[0] - 1))
+        anchor_corrections.append(0.0)
+        order = np.argsort(anchor_rows)
+        unique_rows, unique_indices = np.unique(np.asarray(anchor_rows)[order], return_index=True)
+        ordered_corrections = np.asarray(anchor_corrections)[order][unique_indices]
+        correction[:, column] = np.interp(rows, unique_rows, ordered_corrections)
+    correction = gaussian_filter(
+        correction,
+        sigma=(vertical_sigma_samples, lateral_sigma_traces),
+        mode="reflect",
+    )
+    correction = np.clip(
+        horizon_weight * correction,
+        -maximum_correction_rgt,
+        maximum_correction_rgt,
+    )
+    candidate = base + correction
+    refined, repair_qc = repair_rgt_monotonicity(candidate, minimum_step=minimum_step)
+    post = _horizon_residuals_ms(refined, times, horizons_ms, references)
+    adjustment = refined - base
+    return HorizonRgtRefinement(
+        rgt=refined,
+        horizon_reference_levels=references,
+        qc={
+            "enabled": True,
+            "method": "regularized_capped_horizon_residual_interpolation_plus_isotonic_repair",
+            "horizon_weight": float(horizon_weight),
+            "lateral_sigma_traces": float(lateral_sigma_traces),
+            "vertical_sigma_samples": float(vertical_sigma_samples),
+            "maximum_correction_rgt": float(maximum_correction_rgt),
+            "pre_horizon_residuals": pre,
+            "post_horizon_residuals": post,
+            "adjustment_rmse": float(np.sqrt(np.mean(adjustment**2))),
+            "adjustment_max_absolute": float(np.max(np.abs(adjustment))),
+            "monotonic_repair": repair_qc,
+            "monotonicity": monotonicity_report(refined),
+        },
+    )
 
 
 def integrate_dip_to_rgt(
@@ -217,7 +364,7 @@ def estimate_pwd_dip(
     structure_order: int = 2,
     structure_epsilon: float = 0.01,
 ) -> PwdDipResult:
-    """Run the historical two-pass PySeistr PWD dip sequence without RGT integration."""
+    """Run the two-pass PySeistr PWD dip sequence without RGT integration."""
     image = np.asarray(seismic, dtype=np.float32)
     if image.ndim != 2 or not np.isfinite(image).all():
         raise ValueError("seismic must be a finite [time, cdp] array")

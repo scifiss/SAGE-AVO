@@ -40,6 +40,8 @@ def infer_full_realization(
     steps: int,
     batch_size: int,
     device: torch.device,
+    valid_mask: np.ndarray | None = None,
+    guidance_scale: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Infer and Hann-stitch elastic properties and segmentation probabilities."""
     model.eval()
@@ -74,7 +76,24 @@ def infer_full_realization(
         rgt_batch = torch.from_numpy(
             np.stack([rgt[t : t + patch_shape[0], x : x + patch_shape[1]] for t, x in batch_positions]).astype(np.float32)
         ).to(device)
-        prediction = model.sample(avo_batch, low_batch, rgt_batch, steps=steps)
+        mask_batch = None
+        if valid_mask is not None:
+            mask_batch = torch.from_numpy(
+                np.stack(
+                    [
+                        valid_mask[t : t + patch_shape[0], x : x + patch_shape[1]]
+                        for t, x in batch_positions
+                    ]
+                ).astype(np.float32)
+            ).unsqueeze(1).to(device)
+        prediction = model.sample(
+            avo_batch,
+            low_batch,
+            rgt_batch,
+            steps=steps,
+            guidance_scale=guidance_scale,
+            avo_mask=mask_batch,
+        )
         final_time = torch.ones(prediction.shape[0], device=device)
         logits = model(prediction, final_time, avo_batch, low_batch, rgt_batch).segmentation_logits
         physical = prediction.cpu().numpy() * y_std[None] + y_mean[None]

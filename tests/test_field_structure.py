@@ -22,6 +22,7 @@ from sage_avo.structure.rgt import (
     PwdRgtResult,
     load_pwd_rgt,
     repair_rgt_monotonicity,
+    refine_rgt_with_horizons,
     save_pwd_rgt,
 )
 
@@ -36,7 +37,7 @@ def test_field_stack_archive_round_trip(tmp_path: Path):
         cdps=np.array([100, 101], dtype=np.int32),
         line_xy=np.array([[0.0, 1.0], [2.0, 3.0]]),
         band_names=("near", "mid", "far"),
-        band_limits_degrees=((3.0, 17.0), (18.0, 31.0), (32.0, 45.0)),
+        band_limits_degrees=((3.0, 17.0), (17.0, 31.0), (31.0, 45.0)),
     )
     path = tmp_path / "field.npz"
     save_field_line_stacks(path, stacks)
@@ -85,6 +86,35 @@ def test_rgt_repair_is_strictly_monotonic():
     repaired, qc = repair_rgt_monotonicity(raw, minimum_step=1e-5)
     assert np.all(np.diff(repaired, axis=0) >= 9e-6)
     assert qc["adjustment_max_absolute"] > 0.0
+
+
+def test_regularized_horizon_refinement_is_optional_monotonic_and_improves_ties():
+    time_ms = np.arange(80, dtype=float) * 4.0
+    columns = np.arange(21, dtype=float)
+    base = np.arange(80, dtype=float)[:, None] / 79.0
+    base = base + 0.025 * np.sin(columns / 4.0)[None]
+    top = 100.0 + 18.0 * np.sin(columns / 5.0)
+    base_horizon = 220.0 + 22.0 * np.sin(columns / 5.0 + 0.4)
+    disabled = refine_rgt_with_horizons(
+        base,
+        time_ms,
+        {"T6": top, "T7": base_horizon},
+        enabled=False,
+    )
+    np.testing.assert_array_equal(disabled.rgt, base.astype(np.float32))
+    result = refine_rgt_with_horizons(
+        base,
+        time_ms,
+        {"T6": top, "T7": base_horizon},
+        horizon_weight=0.6,
+        maximum_correction_rgt=0.08,
+    )
+    assert np.all(np.diff(result.rgt, axis=0) > 0.0)
+    for name in ("T6", "T7"):
+        pre = result.qc["pre_horizon_residuals"][name]["rmse_ms"]
+        post = result.qc["post_horizon_residuals"][name]["rmse_ms"]
+        assert post < pre
+    assert result.qc["adjustment_max_absolute"] <= 0.081
 
 
 def test_interval_mask_uses_interpreted_surfaces():

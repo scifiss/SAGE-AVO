@@ -1,7 +1,7 @@
 # Data layout
 
-Large, private, and generated arrays are intentionally excluded from Git. The
-local workflow preserves the research project's stage-aware layout:
+Large, licensed, and generated arrays are excluded from Git. Local execution
+uses the following stage-aware layout:
 
 ```text
 data/

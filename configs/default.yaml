@@ -13,8 +13,8 @@ avo:
   representative_angles_degrees: [10, 24, 38]
   bands_degrees:
     near: [3, 17]
-    mid: [18, 31]
-    far: [32, 45]
+    mid: [17, 31]
+    far: [31, 45]
   wavelet_hz: 14.0
   mute:
     start_angle_degrees: 30.0

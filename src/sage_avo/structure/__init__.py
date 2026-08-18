@@ -9,6 +9,7 @@ from .calibration import (
     project_horizon_depth,
 )
 from .rgt import (
+    HorizonRgtRefinement,
     PwdDipResult,
     PwdRgtResult,
     estimate_pwd_dip,
@@ -17,12 +18,14 @@ from .rgt import (
     load_pwd_rgt,
     monotonicity_report,
     repair_rgt_monotonicity,
+    refine_rgt_with_horizons,
     save_pwd_rgt,
 )
 
 __all__ = [
     "GraphEdges",
     "HorizonCalibration",
+    "HorizonRgtRefinement",
     "PwdDipResult",
     "PwdRgtResult",
     "build_rgt_graph",
@@ -36,5 +39,6 @@ __all__ = [
     "monotonicity_report",
     "project_horizon_depth",
     "repair_rgt_monotonicity",
+    "refine_rgt_with_horizons",
     "save_pwd_rgt",
 ]

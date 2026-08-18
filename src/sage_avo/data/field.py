@@ -1,9 +1,8 @@
-"""Streaming readers for the private S01 field line.
+"""Bounded-memory readers and stack builders for the S01 field line.
 
-The source research notebook loaded the complete multi-gigabyte SEG-Y into
-memory before stacking.  This module preserves the numerical operation (a
-mean over traces in each CDP/angle bin) while reading traces in bounded chunks.
-No field-data path is embedded in the public package.
+Trace streaming computes exact means within each CDP/angle bin without loading
+the complete multi-gigabyte SEG-Y payload into memory. Data locations are
+provided exclusively through configuration.
 """
 
 from __future__ import annotations
@@ -137,10 +136,11 @@ def stack_segy_line(
 ) -> FieldLineStacks:
     """Build exact mean CDP/angle stacks from SEG-Y using bounded memory.
 
-    The source S01 file stores integer incidence-angle bins in the SEG-Y offset
-    word.  Because that convention is not standard SEG-Y semantics, callers
-    must explicitly set ``angle_header_semantics='incidence_angle_degrees'``.
-    The function otherwise refuses to label the header as an angle.
+    The configured S01 export stores integer incidence-angle bins in the SEG-Y
+    offset word. Because that convention is not standard SEG-Y semantics, the
+    function requires
+    ``angle_header_semantics='incidence_angle_degrees'`` and otherwise refuses
+    to label the header as an angle.
     """
     if angle_header_semantics != "incidence_angle_degrees":
         raise ValueError(

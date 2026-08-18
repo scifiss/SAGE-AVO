@@ -1,0 +1,42 @@
+schema_version: 3
+
+# This is the single Stage-02/Stage-04 physics contract. The principal
+# synthetic operator is exact PP Zoeppritz; Shuey P/G remain compact features.
+forward_model:
+  specification_id: sage_avo_exact_pp_v003_main_3_45deg_ricker14
+  primary_operator: exact_pp_zoeppritz
+  production_alternative: madagascar_sfzoeppritz2
+  local_backend: numpy
+  angles_degrees: {start: 3.0, stop: 45.0, step: 1.0}
+  bands:
+    near: [3.0, 17.0]
+    mid: [17.0, 31.0]
+    far: [31.0, 45.0]
+  band_endpoint_convention: inclusive_shared_endpoints
+  dt_seconds: 0.004
+  convolution_mode: constant_zero_same
+  wavelet_bank:
+    - wavelet_id: ricker_14hz_zero_phase_controlled_baseline
+      kind: ricker
+      peak_frequency_hz: 14.0
+      bandwidth_hz: null
+      phase_degrees: 0.0
+      amplitude: 1.0
+      samples: 81
+      angle_minimum_degrees: null
+      angle_maximum_degrees: null
+  front_mute:
+    enabled: true
+    start: [30.0, 0.0]
+    end: [45.0, 0.1]
+    taper_samples: 5
+    # Time zero is the top sample of the complete 301-sample modeling window.
+    # Patch operators carry a global sample origin and never restart this mute.
+    time_origin_seconds: 0.0
+  amplitude_normalization: none_before_training_statistics
+
+  # A separate sensitivity configuration, deliberately excluded from the
+  # primary 3–45 degree experiment.
+  optional_angle_sensitivity:
+    enabled: false
+    maximum_degrees: 55.0

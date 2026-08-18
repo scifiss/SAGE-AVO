@@ -1,0 +1,155 @@
+schema_version: 3
+forward_model_config: forward_model_v003.yaml
+
+experiment:
+  name: sage_avo_s01_v003_production
+  seed: 12345
+  output_root: results/experiments/sage_avo_s01_v003_production
+
+dataset:
+  id: s01data
+  directory: datasets/ds_v003_production100_diverse
+
+patches:
+  shape: [50, 100]
+  stride: [10, 25]
+
+capabilities:
+  conditional_straight_path_flow: {implemented: true, enabled: true}
+  rgt_transformerconv_graph: {implemented: true, enabled: true}
+  exact_zoeppritz_training_loss: {implemented: true, enabled: true}
+  native_halo_physics_context: {implemented: true, enabled: true}
+  physics_guided_sampling: {implemented: true, enabled: false}
+  contrastive_loss: {implemented: true, enabled: false}
+  adaptive_task_weighting: {implemented: true, enabled: false}
+  weighted_patch_sampling: {implemented: true, enabled: true}
+  diverse_patch_candidates: {implemented: true, enabled: true}
+  geological_and_avo_augmentation: {implemented: true, enabled: true}
+  criterion_specific_checkpoints: {implemented: true, enabled: true}
+
+model:
+  name: SAGE-AVO
+  input_avo_channels: [near, mid, far]
+  prior_channels: [vp_low, vs_low, density_low]
+  structural_channel: rgt
+  hidden_channels: 64
+  graph_layers: 2
+  graph_heads: 4
+  max_rgt_shift_samples: 3
+  classes: 3
+  representative_angles_degrees: [10.0, 24.0, 38.0]
+  variants:
+    full: {graph_mode: rgt, physics_weight: 0.5}
+    no_gnn: {graph_mode: none, physics_weight: 0.5}
+    no_rgt: {graph_mode: cartesian, physics_weight: 0.5}
+    no_physics: {graph_mode: rgt, physics_weight: 0.0}
+
+training:
+  epochs: 120
+  batch_size: 8
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  scheduler: cosine_annealing
+  scheduler_eta_min: 0.000001
+  validation_time_grid: [0.2, 0.5, 0.8]
+  validation_sample_every: 1
+  validation_sample_batches: 16
+  sample_steps_validation: 20
+  sample_steps_test: 20
+  class_weight_foreground_boost: 1.15
+
+  checkpoint_criteria:
+    fixed_objective: fixed_final_weight_validation_total
+    sampling: mean_normalized_elastic_rmse_minus_0.1_miou
+    segmentation: sampled_macro_miou
+    whole_realization: mean_normalized_rmse_minus_0.1_miou_over_fixed_validation_realizations
+  checkpointing:
+    preferred_final_criterion: whole_realization
+    periodic_interval_epochs: 10
+    whole_validation_every_epochs: 10
+    whole_validation_realization_count: 2
+
+  loss_weights:
+    inversion: 1.0
+    flow_velocity: 0.65
+    full_property: 0.20
+    ssim_initial: 0.15
+    segmentation: 0.30
+    segmentation_cross_entropy: 1.0
+    segmentation_dice: 0.50
+    physics: 0.50
+    structure: 0.50
+    density_initial: 2.0
+
+  curriculum:
+    density_weight: {start: 2.0, end: 3.5}
+    ssim_weight: {start: 0.15, end: 0.05}
+    physics_multiplier: {start: 1.0, end: 0.70}
+    structure_multiplier: {start: 1.0, end: 0.75}
+
+  weighted_patch_sampling:
+    implemented: true
+    enabled: true
+    foreground_boost: 5.0
+    structure_boost: 2.5
+    avo_gradient_boost: 2.0
+    foreground_fraction_threshold: 0.01
+    upper_quantile: 0.98
+    replacement: true
+
+  augmentation:
+    implemented: true
+    enabled: true
+    horizontal_flip_probability: 0.50
+    avo_gain_probability: 0.40
+    avo_gain_range: [0.98, 1.02]
+    avo_noise_probability: 0.35
+    avo_noise_std_normalized: 0.01
+
+  contrastive_loss:
+    implemented: true
+    enabled: false
+    mode: legacy_self_instance
+    temperature: 0.07
+    max_samples: 1024
+    weight: 0.0
+
+  adaptive_task_weighting:
+    implemented: true
+    enabled: false
+    method: homoscedastic_log_variance
+
+  physics_guided_sampling:
+    implemented: true
+    enabled: false
+    guidance_scale: 0.0
+    start_fraction: 0.3333333333333333
+    interval_steps: 3
+
+evaluation:
+  properties: [vp, vs, density]
+  elastic_metrics: [rmse, mae, r2, correlation, ssim]
+  segmentation_metrics: [miou, macro_dice, class_iou, class_dice]
+  bootstrap_repetitions: 2000
+  bootstrap_confidence: 0.95
+  representative_rule: median_full_model_vp_rmse
+  graph_display_fraction: 0.15
+
+field_application:
+  dataset_id: s01data
+  stage01_version: v003
+  low_frequency_prior:
+    source: field_conditioned_elastic_background
+    truth_derived: false
+    cutoff_hz: 2.0
+    dt_seconds: 0.004
+    sigma_constant: 0.133
+    lateral_sigma_ratio: 2.0
+    boundary_mode: reflect
+  calibration_manifest_required: true
+  interpretation: field deployment and QC; upstream wells are not blind validation
+
+hardware:
+  preferred_device: cuda
+  deterministic_algorithms: true

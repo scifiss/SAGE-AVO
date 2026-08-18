@@ -1,6 +1,12 @@
 """Optional PyTorch/PyG SAGE-AVO and baseline architectures."""
 
-__all__ = ["ALL_VARIANTS", "LEARNED_VARIANTS", "SAGEAVO", "build_sage_avo_variant"]
+__all__ = [
+    "ALL_VARIANTS",
+    "LEARNED_VARIANTS",
+    "SAGEAVO",
+    "build_sage_avo_variant",
+    "sage_avo_model_kwargs",
+]
 
 try:
     from .sage_avo import SAGEAVO as SAGEAVO
@@ -8,6 +14,7 @@ try:
         ALL_VARIANTS as ALL_VARIANTS,
         LEARNED_VARIANTS as LEARNED_VARIANTS,
         build_sage_avo_variant as build_sage_avo_variant,
+        sage_avo_model_kwargs as sage_avo_model_kwargs,
     )
 except ImportError:
     # The scientific core remains importable without optional ML dependencies.

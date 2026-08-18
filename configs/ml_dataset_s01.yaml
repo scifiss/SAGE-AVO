@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 
 stage:
   name: leakage_safe_ml_dataset
@@ -6,12 +6,13 @@ stage:
 
 inputs:
   dataset_id: s01data
-  synthetic_version: v001
-  realization_directory: synthetic/v001/realizations
+  synthetic_version: v002_production100_overlap
+  realization_directory: synthetic/v002_production100_overlap/realizations
+  expected_realization_count: 100
 
 split:
   unit: realization
-  fractions: [0.70, 0.15, 0.15]
+  fractions: [0.70, 0.20, 0.10]
 
 prior:
   source: gaussian_filter_of_synthetic_truth
@@ -29,9 +30,9 @@ patches:
     - {raw_shape: [50, 100], fraction: 0.50}
     - {raw_shape: [64, 128], fraction: 0.25}
   per_realization:
-    train: 250
-    validation: 100
-    test: 100
+    train: 200
+    validation: 200
+    test: 200
   maximum_invalid_fraction: 0.15
   interpolation:
     continuous: bilinear
@@ -44,5 +45,5 @@ normalization:
   apply_target_statistics_to_prior: true
 
 outputs:
-  version: ds_v001_realization_split_multiscale
-  directory: datasets/ds_v001_realization_split_multiscale
+  version: ds_v002_production100_multiscale
+  directory: datasets/ds_v002_production100_multiscale

@@ -35,7 +35,8 @@ the configured SEG-Y, T6/T7 interpretations, and five LAS wells it performs:
 5. grouped regional and reservoir Random-Forest Vp/Vs/density modeling with
    leave-one-well-out QC;
 6. canonical arrays, model files, tables, checksums, QC records, and manifests
-   under the versioned `s01data/v001` contract.
+   under the versioned `s01data/v003` contract. Raw, monotonic-repaired, and
+   optional horizon-refined RGT are retained as distinct artifacts.
 
 Downstream stages consume this exported contract through `data/`; reusable
 algorithms reside in `src/sage_avo`.
@@ -112,7 +113,7 @@ src/sage_avo/data/       splits, normalization, multiscale patch metadata
 src/sage_avo/structure/  RGT, horizon, and graph utilities
 src/sage_avo/geology/    facies convention, perturbation, fluid substitution
 src/sage_avo/forward/    exact Zoeppritz, Shuey features, wavelet, stacks, QC
-src/sage_avo/models/     SAGE-AVO and a controlled HCTNet-style baseline
+src/sage_avo/models/     SAGE-AVO and its controlled graph/physics variants
 src/sage_avo/training/   flow path, losses, checkpoint handling
 src/sage_avo/evaluation/ elastic/segmentation metrics and sensitivity
 src/sage_avo/visualization/ publication figure builders
@@ -218,7 +219,9 @@ The field scope and validation boundaries are documented in
 - Normalization is fitted on training data only.
 - Resized multiscale patches retain their raw scale metadata.
 - Normalized DELTA is consistently `1 - P(sand)`.
-- Public angle bands are non-overlapping: 3–17°, 18–31°, and 32–45°.
+- Production angle bands are 3–17°, 17–31°,
+  and 31–45°. Shared endpoints at 17° and 31° are intentional; compact P/G
+  coordinates are the band midpoints 10°, 24°, and 38°.
 - Numerical SEG-Y header bins are checked against configuration. Their semantic
   interpretation as incidence angle still requires acquisition/export metadata;
   numerical validity alone is not semantic proof.
@@ -228,22 +231,14 @@ The field scope and validation boundaries are documented in
 See [methodology](docs/methodology.md) and
 [data/reproducibility](docs/data_and_reproducibility.md) for the full protocol.
 
-### Controlled production run
+### Versioned experiment drivers
 
-```bash
-SAGE_AVO_RUN_FULL_TRAINING=1 python -m nbconvert --to notebook --execute \
-  notebooks/04_sage_avo_training.ipynb --output 04_sage_avo_training.executed.ipynb \
-  --output-dir /path/to/private/executed_notebooks
-SAGE_AVO_RUN_EVALUATION=1 SAGE_AVO_RUN_FIELD_SENSITIVITY=1 \
-  python -m nbconvert --to notebook --execute \
-  notebooks/05_evaluation_and_field_application.ipynb \
-  --output 05_evaluation_and_field_application.executed.ipynb \
-  --output-dir /path/to/private/executed_notebooks
-```
-
-The separate `run_controlled_ablation.py --smoke` path is a small software
-harness for CI/operator checks; it is not the field-conditioned research
-experiment documented by Notebooks 02–05.
+The command-line drivers separate bounded operator validation from full
+field-conditioned experiments. Validation runs are explicitly labeled and are
+not eligible for performance claims. Production runs require versioned source,
+data, and calibration manifests, write only to the configured artifact root,
+and require an explicit `--resume` flag before continuing an existing training
+run. Each driver exposes its available stages and safeguards through `--help`.
 
 ## Citation
 

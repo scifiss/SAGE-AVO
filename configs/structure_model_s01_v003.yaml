@@ -1,0 +1,79 @@
+schema_version: 3
+
+dataset:
+  id: s01data
+  version: v003
+
+segy:
+  angle_header: offset
+  # Verified only for the configured S01 export. Numerical 3–45 values alone
+  # do not establish the semantics of an arbitrary SEG-Y header.
+  angle_header_semantics: incidence_angle_degrees
+  time_window_ms: [2000.0, 3200.0]
+  midpoint_y_max: 160000.0
+  bands_degrees:
+    near: [3.0, 17.0]
+    mid: [17.0, 31.0]
+    far: [31.0, 45.0]
+  robust_clip_percentiles: [1.0, 99.0]
+  chunk_traces: 32768
+
+structure:
+  gaussian_sigma: [1.0, 0.0]
+  dip_order: 2
+  dip_iterations: 14
+  dip_rect: [6, 14, 1]
+  structure_radius: 2
+  structure_order: 2
+  structure_epsilon: 0.01
+  rgt_epsilon: 0.08
+  monotonicity_tolerance: -0.001
+  max_fraction_bad: 0.005
+  monotonic_repair_minimum_step: 0.000001
+  horizon_refinement:
+    enabled: false
+    method: regularized_capped_horizon_residual_interpolation
+    horizon_weight: 0.35
+    lateral_sigma_traces: 8.0
+    vertical_sigma_samples: 1.5
+    maximum_correction_rgt: 0.05
+
+horizons:
+  projection_max_distance_m: 50.0
+  depth_time_distance_scale_m: 1500.0
+  rgt_diagnostic_max_rmse_ms: 30.0
+  modeling_surface_policy: seismic_conformed_constant_rgt
+
+wheeler:
+  n_rgt: 520
+  lateral_distance_scale_m: 1500.0
+  smooth_sigma: [2.0, 8.0]
+  delta_interpretation: shaliness
+  sand_probability_definition: 1-delta
+
+horizon_conditioning:
+  n_strat: 201
+  lateral_distance_scale_m: 1000.0
+  max_support_distance_m: 2000.0
+  minimum_support_confidence: 0.10
+  minimum_interval_ms: 40.0
+  minimum_rgt_separation: 0.001
+  rgt_steering_weight: 0.35
+  coordinate_smooth_sigma: [1.5, 8.0]
+  smooth_sigma: [2.0, 6.0]
+  composite_edge_fraction: 0.15
+
+elastic_model:
+  features: [DELTA, PORO, RGT]
+  targets: [VP, VS, RHOB]
+  validation: leave_one_well_out
+  n_estimators: 150
+  min_samples_leaf: 5
+  seed: 12345
+
+artifacts:
+  layout: canonical_data_layout
+  preserve_rgt_products:
+    - rgt_raw.npy
+    - rgt_tau.npy
+    - rgt_horizon_refined.npy

@@ -1,9 +1,9 @@
-schema_version: 1
+schema_version: 2
 
 stage:
   name: field_conditioned_synthetic_avo
   seed: 12345
-  realization_count: 200
+  realization_count: 100
   realization_id_offset: 1000000
 
 inputs:
@@ -23,8 +23,8 @@ geology:
   sand_heterogeneity_std: [0.01, 0.03]
   porosity_heterogeneity_std: [0.003, 0.012]
   heterogeneity_sigma_samples: [1.0, 3.0]
-  # Calibrated Stage-01 reservoir P(sand) spans approximately 0.13--0.48.
-  # The historical 0.5 threshold was coupled to the reversed DELTA convention.
+  # Calibrated Stage-01 reservoir P(sand) spans approximately 0.13--0.48;
+  # the threshold follows that distribution and the canonical DELTA convention.
   sand_facies_probability_threshold: 0.30
   preserve_regional_background_outside_reservoir: true
 
@@ -65,14 +65,15 @@ forward:
     start: [30.0, 0.0]
     end: [45.0, 0.1]
     taper_samples: 5
-  legacy_bands:
+  production_bands:
     near: [3.0, 17.0]
     mid: [17.0, 31.0]
     far: [31.0, 45.0]
-  current_bands:
-    near: [3.0, 17.0]
-    mid: [18.0, 31.0]
-    far: [32.0, 45.0]
+  noise:
+    enabled: true
+    standard_deviation_fraction: 0.03
+    reference: per_band_standard_deviation
+    seed_offset: 2000000
 
 structure_qc:
   recalculate_pwd_dip: true
@@ -80,5 +81,5 @@ structure_qc:
   graph_rgt_channel: coherently_warped_stage01_rgt
 
 outputs:
-  version: v001
-  directory: synthetic/v001/realizations
+  version: v002_production100_overlap
+  directory: synthetic/v002_production100_overlap/realizations

@@ -8,8 +8,8 @@ import numpy as np
 def delta_from_sand_probability(sand_probability: np.ndarray) -> np.ndarray:
     """Convert sand probability to shale-like DELTA.
 
-    The source well workflow interprets lower DELTA as cleaner sand. Therefore
-    this public implementation defines ``DELTA = 1 - P(sand)`` everywhere.
+    The well-log convention interprets lower DELTA as cleaner sand. SAGE-AVO
+    therefore defines ``DELTA = 1 - P(sand)`` throughout the artifact contract.
     """
     probability = np.asarray(sand_probability, dtype=float)
     if np.nanmin(probability) < 0 or np.nanmax(probability) > 1:

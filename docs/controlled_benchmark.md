@@ -6,7 +6,7 @@ How much information does SAGE-AVO add beyond a supplied low-frequency elastic
 prior, and what are the incremental contributions of graph propagation, RGT
 steering, and differentiable AVO consistency?
 
-The production contract is `configs/sage_avo_s01.yaml`; Notebooks 02–05 expose
+The production contract is `configs/sage_avo_s01_v003.yaml`; Notebooks 02–05 expose
 the complete data-generation, dataset, training, and evaluation sequence.
 
 ## Matched conditions
@@ -17,9 +17,10 @@ the complete data-generation, dataset, training, and evaluation sequence.
 4. `no_rgt`: matched graph branch with Cartesian lateral connectivity;
 5. `no_physics`: full architecture with the physics-loss weight set to zero.
 
-HCTNet is included only after retraining with the identical prior, realization
-split, normalization, masks, inference tiling, and checkpoint-selection rule.
-Historical HCTNet values are not a controlled comparison.
+Any external architecture is included only after retraining with the identical
+prior, realization split, normalization, masks, inference tiling, and
+checkpoint-selection rule. Unmatched external values are not controlled
+comparisons.
 
 ## Prior and inverse-problem scope
 
@@ -51,12 +52,14 @@ the same tiling, Hann blending, integration steps, masks, and metrics.
 
 ## Training and evaluation
 
-Notebook 04 trains all learned variants when
-`SAGE_AVO_RUN_FULL_TRAINING=1`. Each run writes its seed, split IDs,
+Notebook 04 exposes the training contract; the versioned production interface is
+`scripts/run_revision3_production.py train --variant ...`. Each run writes its seed, split IDs,
 normalization, prior definition, config hash, optimizer schedule, and separate
-best-flow/best-sampling checkpoints.
+fixed-objective, sampling, segmentation, whole-realization, periodic, and last
+checkpoints.
 
-Notebook 05 runs inference when `SAGE_AVO_RUN_EVALUATION=1`. It reports RMSE,
+Notebook 05 exposes the evaluation contract. The production driver first
+generates deterministic whole-test predictions and then reports RMSE,
 MAE, R², SSIM, mIoU, macro Dice/F1, and class IoU per realization before
 aggregation. Paired bootstrap intervals compare the full model with each
 control. Positive paired improvement is defined to mean that the full model is
@@ -68,7 +71,7 @@ generation.
 
 ## Development harness boundary
 
-`scripts/run_controlled_ablation.py --smoke` creates a small data-independent
-software harness for CI and operator validation. It exercises shared production
-functions but is not the field-conditioned research experiment and must not be
-used for scientific performance claims.
+`scripts/run_revision3_validation.py` creates a bounded eight-realization,
+two-epoch operator/science validation. It exercises the production functions
+but is distinct from the 100-realization experiment and is not eligible for
+performance claims.

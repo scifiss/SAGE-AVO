@@ -1,0 +1,70 @@
+schema_version: 3
+
+stage:
+  name: leakage_safe_ml_dataset_v003
+  seed: 12345
+
+inputs:
+  dataset_id: s01data
+  synthetic_version: v003_production100_corrected
+  realization_directory: synthetic/v003_production100_corrected/realizations
+  expected_realization_count: 100
+
+split:
+  unit: geology_realization
+  fractions: [0.70, 0.20, 0.10]
+
+prior:
+  source: gaussian_filter_of_synthetic_truth
+  truth_derived: true
+  cutoff_hz: 2.0
+  dt_seconds: 0.004
+  sigma_constant: 0.133
+  lateral_sigma_ratio: 2.0
+  boundary_mode: reflect
+
+physics_context:
+  native_only: true
+  native_dt_seconds: 0.004
+  mute_origin_seconds: 0.0
+  convolution_halo_samples: 40
+  compare_clean_stage02_avo: true
+
+patches:
+  output_shape: [50, 100]
+  scales:
+    - {raw_shape: [40, 80], fraction: 0.25}
+    - {raw_shape: [50, 100], fraction: 0.50}
+    - {raw_shape: [64, 128], fraction: 0.25}
+  per_realization:
+    train: 200
+    validation: 200
+    test: 200
+  maximum_invalid_fraction: 0.15
+  interpolation:
+    continuous: bilinear
+    categorical: nearest
+  candidate_sampler:
+    mode: diverse
+    depth_bins: 4
+    minimum_separation_samples: 4.0
+    top_quantile: 0.75
+    maximum_attempt_multiplier: 100
+    representative_angles_degrees: [10.0, 24.0, 38.0]
+    categories:
+      - facies_boundary
+      - high_dip
+      - high_rgt_change
+      - high_avo_gradient_change
+      - reservoir
+      - background
+
+normalization:
+  fit_on: training_geology_realizations_only
+  input_channels: [avo_near, avo_mid, avo_far]
+  target_channels: [vp, vs, density]
+  apply_target_statistics_to_prior: true
+
+outputs:
+  version: ds_v003_production100_diverse
+  directory: datasets/ds_v003_production100_diverse

@@ -14,6 +14,19 @@ class ElasticProperties:
     density: np.ndarray
 
 
+@dataclass(frozen=True)
+class LocalGassmannResult:
+    """Local RF-background substitution with diagnostic dry-frame state."""
+
+    elastic: ElasticProperties
+    saturated_bulk_gpa: np.ndarray
+    dry_bulk_gpa: np.ndarray
+    shear_gpa: np.ndarray
+    mineral_bulk_gpa: np.ndarray
+    fluid_bulk_gpa: np.ndarray
+    adjusted_mineral_fraction: float
+
+
 def moduli_from_velocities(vp: np.ndarray, vs: np.ndarray, density: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """Return bulk and shear moduli in a unit system consistent with inputs."""
     vp_array = np.asarray(vp, dtype=float)
@@ -30,6 +43,231 @@ def velocities_from_moduli(bulk: np.ndarray, shear: np.ndarray, density: np.ndar
     vp = np.sqrt(np.maximum((bulk + 4.0 * shear / 3.0) / rho, 0.0))
     vs = np.sqrt(np.maximum(shear / rho, 0.0))
     return ElasticProperties(vp, vs, rho)
+
+
+def elastic_moduli_gpa(
+    vp_m_s: np.ndarray,
+    vs_m_s: np.ndarray,
+    density_g_cc: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return saturated bulk and shear moduli in GPa from explicit field units."""
+    vp_km_s = np.asarray(vp_m_s, dtype=float) / 1000.0
+    vs_km_s = np.asarray(vs_m_s, dtype=float) / 1000.0
+    density = np.asarray(density_g_cc, dtype=float)
+    shear = density * vs_km_s**2
+    bulk = density * vp_km_s**2 - 4.0 * shear / 3.0
+    return bulk, shear
+
+
+def elastic_from_gpa(
+    bulk_gpa: np.ndarray,
+    shear_gpa: np.ndarray,
+    density_g_cc: np.ndarray,
+) -> ElasticProperties:
+    """Convert GPa and g/cc to m/s while preserving the stated unit contract."""
+    density = np.maximum(np.asarray(density_g_cc, dtype=float), 1e-8)
+    vp = 1000.0 * np.sqrt(
+        np.maximum((np.asarray(bulk_gpa) + 4.0 * np.asarray(shear_gpa) / 3.0) / density, 0.0)
+    )
+    vs = 1000.0 * np.sqrt(np.maximum(np.asarray(shear_gpa) / density, 0.0))
+    return ElasticProperties(vp, vs, density)
+
+
+def mineral_bulk_modulus_vrh(
+    shaliness: np.ndarray,
+    *,
+    quartz_bulk_modulus_gpa: float = 39.0,
+    clay_bulk_modulus_gpa: float = 21.0,
+) -> np.ndarray:
+    """Voigt-Reuss-Hill mineral bulk modulus for the DELTA=shaliness convention."""
+    shale = np.clip(np.asarray(shaliness, dtype=float), 0.0, 1.0)
+    voigt = (1.0 - shale) * quartz_bulk_modulus_gpa + shale * clay_bulk_modulus_gpa
+    reuss = 1.0 / (
+        (1.0 - shale) / quartz_bulk_modulus_gpa + shale / clay_bulk_modulus_gpa
+    )
+    return 0.5 * (voigt + reuss)
+
+
+def brie_fluid_mixture(
+    co2_saturation: np.ndarray,
+    *,
+    brine_bulk_modulus_gpa: float = 2.2,
+    co2_bulk_modulus_gpa: float = 0.1,
+    brine_density_g_cc: float = 1.03,
+    co2_density_g_cc: float = 0.65,
+    brie_exponent: float = 3.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return Brie bulk modulus and arithmetic density for a CO2/brine mixture."""
+    saturation = np.clip(np.asarray(co2_saturation, dtype=float), 0.0, 1.0)
+    bulk = (brine_bulk_modulus_gpa - co2_bulk_modulus_gpa) * (
+        1.0 - saturation
+    ) ** brie_exponent + co2_bulk_modulus_gpa
+    density = (
+        (1.0 - saturation) * brine_density_g_cc
+        + saturation * co2_density_g_cc
+    )
+    return bulk, density
+
+
+def inverse_gassmann_dry_bulk(
+    saturated_bulk_gpa: np.ndarray,
+    porosity: np.ndarray,
+    mineral_bulk_gpa: np.ndarray,
+    fluid_bulk_gpa: float | np.ndarray,
+) -> np.ndarray:
+    """Invert Gassmann using its complete algebraic denominator."""
+    saturated = np.asarray(saturated_bulk_gpa, dtype=float)
+    phi = np.clip(np.asarray(porosity, dtype=float), 1e-6, 0.6)
+    mineral = np.asarray(mineral_bulk_gpa, dtype=float)
+    fluid = np.asarray(fluid_bulk_gpa, dtype=float)
+    numerator = saturated * (phi * mineral / fluid + 1.0 - phi) - mineral
+    denominator = phi * mineral / fluid + saturated / mineral - 1.0 - phi
+    return numerator / np.where(np.abs(denominator) > 1e-10, denominator, np.nan)
+
+
+def forward_gassmann_bulk(
+    dry_bulk_gpa: np.ndarray,
+    porosity: np.ndarray,
+    mineral_bulk_gpa: np.ndarray,
+    fluid_bulk_gpa: float | np.ndarray,
+) -> np.ndarray:
+    """Forward Gassmann bulk modulus in GPa."""
+    dry = np.asarray(dry_bulk_gpa, dtype=float)
+    phi = np.clip(np.asarray(porosity, dtype=float), 1e-6, 0.6)
+    mineral = np.asarray(mineral_bulk_gpa, dtype=float)
+    fluid = np.asarray(fluid_bulk_gpa, dtype=float)
+    denominator = phi / fluid + (1.0 - phi) / mineral - dry / mineral**2
+    return dry + (1.0 - dry / mineral) ** 2 / np.maximum(denominator, 1e-10)
+
+
+def local_inverse_gassmann_substitution(
+    vp_brine_m_s: np.ndarray,
+    vs_brine_m_s: np.ndarray,
+    density_brine_g_cc: np.ndarray,
+    porosity: np.ndarray,
+    shaliness: np.ndarray,
+    co2_saturation: np.ndarray,
+    *,
+    quartz_bulk_modulus_gpa: float = 39.0,
+    clay_bulk_modulus_gpa: float = 21.0,
+    brine_bulk_modulus_gpa: float = 2.2,
+    co2_bulk_modulus_gpa: float = 0.1,
+    brine_density_g_cc: float = 1.03,
+    co2_density_g_cc: float = 0.65,
+    brie_exponent: float = 3.0,
+    compatibility_margin: float = 0.995,
+) -> LocalGassmannResult:
+    """Substitute fluid from the local RF brine state via inverse Gassmann.
+
+    Some empirical RF backgrounds are softer than the lower Gassmann bound
+    implied by a pure quartz/clay mineral mixture.  For those samples the
+    mineral modulus is reduced only as much as required to admit a finite,
+    non-negative local dry frame.  This adjustment is reported explicitly;
+    the local saturated state is never overwritten by an unrelated absolute
+    Hertz--Mindlin model.
+    """
+    vp = np.asarray(vp_brine_m_s, dtype=float)
+    vs = np.asarray(vs_brine_m_s, dtype=float)
+    density = np.asarray(density_brine_g_cc, dtype=float)
+    phi = np.clip(np.asarray(porosity, dtype=float), 1e-4, 0.6)
+    saturation = np.clip(np.asarray(co2_saturation, dtype=float), 0.0, 1.0)
+    shale = np.clip(np.asarray(shaliness, dtype=float), 0.0, 1.0)
+    if not (vp.shape == vs.shape == density.shape == phi.shape == saturation.shape == shale.shape):
+        raise ValueError("All local Gassmann arrays must have identical shapes")
+    if not 0.0 < compatibility_margin < 1.0:
+        raise ValueError("compatibility_margin must lie between zero and one")
+
+    saturated_bulk, shear = elastic_moduli_gpa(vp, vs, density)
+    mineral_prior = mineral_bulk_modulus_vrh(
+        shale,
+        quartz_bulk_modulus_gpa=quartz_bulk_modulus_gpa,
+        clay_bulk_modulus_gpa=clay_bulk_modulus_gpa,
+    )
+    compatibility_denominator = 1.0 / np.maximum(saturated_bulk, 1e-8) - (
+        phi / brine_bulk_modulus_gpa
+    )
+    compatibility_limit = np.where(
+        compatibility_denominator > 1e-10,
+        (1.0 - phi) / compatibility_denominator,
+        mineral_prior,
+    )
+    minimum_mineral = saturated_bulk * 1.001
+    effective_mineral = np.maximum(
+        minimum_mineral,
+        np.minimum(mineral_prior, compatibility_margin * compatibility_limit),
+    )
+    adjusted = effective_mineral < mineral_prior * (1.0 - 1e-8)
+    dry_bulk = inverse_gassmann_dry_bulk(
+        saturated_bulk,
+        phi,
+        effective_mineral,
+        brine_bulk_modulus_gpa,
+    )
+    dry_bulk = np.clip(np.nan_to_num(dry_bulk, nan=0.0), 0.0, 0.999 * effective_mineral)
+    fluid_bulk, fluid_density = brie_fluid_mixture(
+        saturation,
+        brine_bulk_modulus_gpa=brine_bulk_modulus_gpa,
+        co2_bulk_modulus_gpa=co2_bulk_modulus_gpa,
+        brine_density_g_cc=brine_density_g_cc,
+        co2_density_g_cc=co2_density_g_cc,
+        brie_exponent=brie_exponent,
+    )
+    substituted_bulk = forward_gassmann_bulk(
+        dry_bulk,
+        phi,
+        effective_mineral,
+        fluid_bulk,
+    )
+    substituted_density = density + phi * (fluid_density - brine_density_g_cc)
+    elastic = elastic_from_gpa(substituted_bulk, shear, substituted_density)
+    zero = saturation <= 0.0
+    elastic = ElasticProperties(
+        np.where(zero, vp, elastic.vp),
+        np.where(zero, vs, elastic.vs),
+        np.where(zero, density, elastic.density),
+    )
+    return LocalGassmannResult(
+        elastic=elastic,
+        saturated_bulk_gpa=substituted_bulk,
+        dry_bulk_gpa=dry_bulk,
+        shear_gpa=shear,
+        mineral_bulk_gpa=effective_mineral,
+        fluid_bulk_gpa=fluid_bulk,
+        adjusted_mineral_fraction=float(np.mean(adjusted)),
+    )
+
+
+def matched_hm_delta_substitution(
+    elastic_brine: ElasticProperties,
+    shaliness: np.ndarray,
+    porosity: np.ndarray,
+    co2_saturation: np.ndarray,
+    **hm_parameters: float,
+) -> ElasticProperties:
+    """Apply only the matched HM CO2-minus-brine differential to an RF background."""
+    saturation = np.asarray(co2_saturation, dtype=float)
+    hm_brine = hertz_mindlin_gassmann(
+        shaliness,
+        porosity,
+        np.zeros_like(saturation),
+        **hm_parameters,
+    )
+    hm_co2 = hertz_mindlin_gassmann(
+        shaliness,
+        porosity,
+        saturation,
+        **hm_parameters,
+    )
+    zero = saturation <= 0.0
+    return ElasticProperties(
+        np.where(zero, elastic_brine.vp, elastic_brine.vp + hm_co2.vp - hm_brine.vp),
+        np.where(zero, elastic_brine.vs, elastic_brine.vs + hm_co2.vs - hm_brine.vs),
+        np.where(
+            zero,
+            elastic_brine.density,
+            elastic_brine.density + hm_co2.density - hm_brine.density,
+        ),
+    )
 
 
 def gassmann_substitute(
@@ -92,7 +330,7 @@ def hertz_mindlin_gassmann(
     co2_density_g_cc: float = 0.65,
     brie_exponent: float = 3.0,
 ) -> ElasticProperties:
-    """Historical Hertz--Mindlin dry frame followed by Gassmann substitution.
+    """Hertz--Mindlin dry frame followed by Gassmann substitution.
 
     Moduli are in GPa, density in g/cc, and returned velocities in m/s. The
     depth/effective-pressure relation is an explicit scenario assumption, not

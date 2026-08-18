@@ -27,8 +27,8 @@ avo:
   angles_degrees: {start: 3, stop: 45, step: 1}
   bands_degrees:
     near: [3, 17]
-    mid: [18, 31]
-    far: [32, 45]
+    mid: [17, 31]
+    far: [31, 45]
   wavelet_hz: 14.0
   wavelet_samples: 81
   front_mute: true
@@ -46,6 +46,7 @@ model:
   graph_heads: 4
   max_rgt_shift_samples: 3
   classes: 3
+  representative_angles_degrees: [10.0, 24.0, 38.0]
   variants:
     full: {graph_mode: rgt, physics_weight: 0.5}
     no_gnn: {graph_mode: none, physics_weight: 0.5}
@@ -58,17 +59,79 @@ training:
   learning_rate: 0.0003
   weight_decay: 0.0001
   gradient_clip: 1.0
+  scheduler: cosine_annealing
+  scheduler_eta_min: 0.000001
+  validation_time_grid: [0.2, 0.5, 0.8]
   validation_sample_every: 5
   validation_sample_batches: 4
   sample_steps_validation: 20
   sample_steps_test: 100
   checkpoint_criterion: mean_normalized_elastic_rmse_minus_0.1_miou
+  class_weight_foreground_boost: 1.15
   loss_weights:
-    flow: 1.0
+    inversion: 1.0
+    flow_velocity: 0.65
     full_property: 0.2
+    ssim_initial: 0.15
     segmentation: 0.3
+    segmentation_cross_entropy: 1.0
+    segmentation_dice: 0.5
     physics: 0.5
     structure: 0.5
+    density_initial: 2.0
+  curriculum:
+    density_weight: {start: 2.0, end: 3.5}
+    ssim_weight: {start: 0.15, end: 0.05}
+    physics_multiplier: {start: 1.0, end: 0.70}
+    structure_multiplier: {start: 1.0, end: 0.75}
+  weighted_patch_sampling:
+    implemented: true
+    enabled: true
+    foreground_boost: 5.0
+    structure_boost: 2.5
+    avo_gradient_boost: 2.0
+    foreground_fraction_threshold: 0.01
+    upper_quantile: 0.98
+    replacement: true
+  augmentation:
+    implemented: true
+    enabled: true
+    horizontal_flip_probability: 0.50
+    avo_gain_probability: 0.40
+    avo_gain_range: [0.98, 1.02]
+    avo_noise_probability: 0.35
+    avo_noise_std_normalized: 0.01
+  contrastive_loss:
+    implemented: true
+    enabled: false
+    mode: legacy_self_instance
+    temperature: 0.07
+    max_samples: 1024
+    weight: 0.0
+  adaptive_task_weighting:
+    implemented: true
+    enabled: false
+  physics_forward:
+    operator: exact_pp_zoeppritz
+    angles_degrees: {start: 3.0, stop: 45.0, step: 1.0}
+    bands_degrees:
+      - [3.0, 17.0]
+      - [17.0, 31.0]
+      - [31.0, 45.0]
+    wavelet_hz: 14.0
+    wavelet_samples: 81
+    dt_seconds: 0.004
+    front_mute:
+      enabled: true
+      start: [30.0, 0.0]
+      end: [45.0, 0.1]
+      taper_samples: 5
+  physics_guided_sampling:
+    implemented: true
+    enabled: false
+    guidance_scale: 0.0
+    start_fraction: 0.3333333333333333
+    interval_steps: 3
 
 evaluation:
   properties: [vp, vs, density]

@@ -14,6 +14,10 @@ PATTERNS = {
     "obsolete research path": re.compile(r"AVOSurprise|avo-structure-inversion"),
     "generic API key assignment": re.compile(r"(?i)(?:api[_-]?key|secret|token)\s*[:=]\s*['\"][^'\"]{8,}"),
     "private key": re.compile(r"BEGIN (?:RSA |OPENSSH )?PRIVATE KEY"),
+    "private work-log language": re.compile(
+        r"(?i)(?:validated locally against the corresponding|not requested in this execution|"
+        r"original-notebook-style|final 005 setting|talking to (?:me|you)|\bpls\b)"
+    ),
 }
 MAX_FILE_BYTES = 5 * 1024 * 1024
 LOCAL_ONLY_FILES = {Path("configs/paths.yaml")}

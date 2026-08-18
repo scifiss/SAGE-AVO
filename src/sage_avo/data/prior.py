@@ -1,4 +1,4 @@
-"""Explicit truth-derived low-frequency elastic-prior construction."""
+"""One explicit low-frequency elastic-prior operator for synthetic and field data."""
 
 from __future__ import annotations
 
@@ -38,24 +38,34 @@ class PriorDefinition:
         return values
 
 
+def make_low_frequency_prior(
+    elastic_model: np.ndarray,
+    definition: PriorDefinition = PriorDefinition(),
+) -> np.ndarray:
+    """Filter Vp, Vs, and density with the configured 2-D Gaussian operator.
+
+    Parameters
+    ----------
+    elastic_model:
+        Array with shape ``[3, time, trace]`` ordered as Vp, Vs, density.
+    """
+    model = np.asarray(elastic_model, dtype=np.float64)
+    if model.ndim != 3 or model.shape[0] != 3:
+        raise ValueError("elastic_model must have shape [3, time, trace]")
+    sigma = (0.0, definition.sigma_time_samples, definition.sigma_lateral_samples)
+    return gaussian_filter(model, sigma=sigma, mode=definition.boundary_mode).astype(np.float32)
+
+
 def make_truth_derived_prior(
     elastic_truth: np.ndarray,
     definition: PriorDefinition = PriorDefinition(),
 ) -> np.ndarray:
-    """Filter Vp, Vs, and density truth with identical spatial bandwidths.
+    """Build the disclosed oracle prior used by the synthetic experiment.
 
-    Parameters
-    ----------
-    elastic_truth:
-        Array with shape ``[3, time, trace]`` ordered as Vp, Vs, density.
-
-    Notes
-    -----
-    This intentionally uses synthetic truth. It creates an oracle background
-    model for a controlled prior-refinement experiment, not an AVO-only input.
+    This intentionally smooths synthetic truth. It defines a controlled
+    AVO-guided prior-refinement experiment, not unconstrained AVO-only absolute
+    inversion.
     """
-    truth = np.asarray(elastic_truth, dtype=np.float64)
-    if truth.ndim != 3 or truth.shape[0] != 3:
-        raise ValueError("elastic_truth must have shape [3, time, trace]")
-    sigma = (0.0, definition.sigma_time_samples, definition.sigma_lateral_samples)
-    return gaussian_filter(truth, sigma=sigma, mode=definition.boundary_mode).astype(np.float32)
+    if not definition.truth_derived:
+        raise ValueError("Synthetic truth-derived priors require truth_derived=True")
+    return make_low_frequency_prior(elastic_truth, definition)

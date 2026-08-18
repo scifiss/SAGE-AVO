@@ -20,7 +20,10 @@ being unflattened to seismic time.
 
 The structural utilities are dependency-light. PySeistr/PWD is an optional
 field-processing dependency; its outputs are evaluated through RGT
-monotonicity, horizon mistie, and well-residual diagnostics.
+monotonicity, horizon mistie, and well-residual diagnostics. Raw PWD RGT and
+its monotonic repair are preserved. An optional regularized horizon refinement
+is reported separately and is disabled by default: horizon residual reduction
+is not treated as sufficient reason to distort seismic-following structure.
 
 ## Facies convention
 
@@ -40,26 +43,40 @@ folds, correlated displacement fields, and faults. Reservoir-constrained plume
 masks may drive fluid substitution. These realizations are diverse members of a
 field-conditioned geological family, not independent regional geology.
 
-Rock-physics utilities expose modulus conversion and Gassmann substitution.
-Field deployment uses dataset-specific mineral/fluid properties and calibrated
-depth-domain assumptions.
+The production-eligible fluid design constructs a well-calibrated physical dry
+frame, computes matched brine and CO₂ states on that frame, and transfers only
+the fluid-induced bulk-modulus and density changes to the RF-conditioned brine
+background. Shear modulus remains fixed. Eligibility additionally requires a
+versioned pressure/temperature/fluid-property validation artifact. Projected
+inverse-Gassmann and absolute Hertz–Mindlin overwrite modes are retained only
+for artifact compatibility and are excluded from production claims.
+
+Spatial variability is applied to correlated geological and elastic quantities
+before forward modeling. Seismic noise, gain, phase/polarity, coherent noise,
+and weakened/missing far angles are observation perturbations applied after
+the clean exact-physics response; their realization metadata is retained.
 
 ## AVO forward modeling
 
 Synthetic reflectivity uses exact isotropic P-P Zoeppritz equations, followed
 by a zero-phase Ricker wavelet, angle-dependent front mute, and mean stacking.
-The public defaults use non-overlapping inclusive bands:
+The production defaults use declared inclusive shared-endpoint bands:
 
 - near: 3–17°;
-- mid: 18–31°;
-- far: 32–45°.
+- mid: 17–31°;
+- far: 31–45°.
+
+The shared endpoints at 17° and 31° are intentional. Compact P/G summaries use
+the arithmetic band midpoints 10°, 24°, and 38°.
 
 Shuey-derived intercept and gradient are compact network features and
 diagnostics. They are not substituted for exact Zoeppritz synthetic generation.
 
-The NumPy and differentiable Torch operators share assumptions. Experiments
-that include Madagascar use a matched test model and per-band
-`compare_forward_outputs` diagnostics.
+The NumPy and differentiable Torch operators consume one serialized forward
+specification. Native physics-loss patches carry absolute sample origin and a
+vertical wavelet halo, so neither the shallow mute nor convolution is restarted
+at each patch top. Experiments that include Madagascar use a matched test model
+and per-band `compare_forward_outputs` diagnostics.
 
 ## Model
 
@@ -106,7 +123,20 @@ The multitask objective combines:
 - edge-weighted structural smoothness.
 
 Sampling metrics and flow loss are checkpointed separately because lower flow
-loss does not guarantee a better integrated inversion.
+loss does not guarantee a better integrated inversion. The versioned training
+contract also writes criterion-specific fixed-objective, segmentation, and
+deterministic whole-realization validation checkpoints. Test data never select
+checkpoints.
+
+## Field-domain gate
+
+The field prior uses the same declared 2-Hz builder as the synthetic prior but
+starts from the field-conditioned elastic background; it is not truth-derived.
+Raw field AVO is not passed directly through synthetic normalization. A
+versioned calibration manifest must satisfy declared polarity, phase, spectrum,
+amplitude, percentile-overlap, and spatial-stability diagnostics before
+inference. Any amplitude/phase/wavelet transfer is explicit and recorded rather
+than inferred silently.
 
 ## Evaluation design
 

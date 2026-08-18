@@ -120,11 +120,15 @@ def figures(args: argparse.Namespace) -> None:
 
 
 def status(args: argparse.Namespace) -> None:
-    _, experiment, dataset = _paths(args.config, args.experiment_name)
+    config, experiment, dataset = _paths(args.config, args.experiment_name)
+    from sage_avo.experiments.prediction import preferred_inference_checkpoint
+
     checks = {
         "dataset_manifest": dataset / "dataset_manifest.json",
         **{
-            f"checkpoint_{variant}": experiment / "runs" / variant / "best_sampling.pt"
+            f"checkpoint_{variant}": preferred_inference_checkpoint(
+                config, experiment / "runs" / variant
+            )
             for variant in LEARNED_VARIANTS
         },
         **{

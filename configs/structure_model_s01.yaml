@@ -4,15 +4,15 @@ dataset:
 
 segy:
   angle_header: offset
-  # Verified for the local S01 export: the SEG-Y offset word contains integer
+  # Verified for the configured S01 export: the SEG-Y offset word contains integer
   # incidence-angle bins 3..45 degrees. This is not a general SEG-Y assumption.
   angle_header_semantics: incidence_angle_degrees
   time_window_ms: [2000.0, 3200.0]
   midpoint_y_max: 160000.0
   bands_degrees:
     near: [3.0, 17.0]
-    mid: [18.0, 31.0]
-    far: [32.0, 45.0]
+    mid: [17.0, 31.0]
+    far: [31.0, 45.0]
   robust_clip_percentiles: [1.0, 99.0]
   chunk_traces: 32768
 

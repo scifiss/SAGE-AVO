@@ -14,6 +14,13 @@ from .field_conditioning import (
     interval_mask,
     predict_elastic_fields,
 )
+from .fluid_calibration import (
+    CalibratedDryFrameModel,
+    FluidRockPhysics,
+    calibrated_differential_gassmann_substitution,
+    constrained_local_gassmann_substitution,
+    load_calibrated_dry_frame,
+)
 from .synthetic import (
     Deformation,
     FieldConditionedRealization,
@@ -29,9 +36,11 @@ from .rock_physics import hertz_mindlin_gassmann
 
 __all__ = [
     "Deformation",
+    "CalibratedDryFrameModel",
     "ElasticModelSet",
     "FieldConditionedRealization",
     "FluidScenario",
+    "FluidRockPhysics",
     "HorizonConditionedFields",
     "SyntheticGeology",
     "WheelerFields",
@@ -41,10 +50,13 @@ __all__ = [
     "build_reservoir_training_table",
     "build_well_training_table",
     "build_wheeler_fields",
+    "calibrated_differential_gassmann_substitution",
+    "constrained_local_gassmann_substitution",
     "delta_from_sand_probability",
     "fit_grouped_elastic_models",
     "hertz_mindlin_gassmann",
     "interval_mask",
+    "load_calibrated_dry_frame",
     "make_deformation",
     "make_field_conditioned_realization",
     "make_synthetic_geology",
