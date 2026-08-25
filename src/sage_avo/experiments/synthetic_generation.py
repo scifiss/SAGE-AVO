@@ -7,6 +7,7 @@ from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
+import time
 from typing import Any
 
 import numpy as np
@@ -21,7 +22,15 @@ from sage_avo.forward import (
     forward_specification_from_mapping,
     observation_config_from_mapping,
 )
-from sage_avo.geology import load_calibrated_dry_frame, make_field_conditioned_realization
+from sage_avo.geology import (
+    FluidRockPhysics,
+    deterministic_candidate_seed,
+    evaluate_candidate_support,
+    load_calibrated_dry_frame,
+    make_field_conditioned_realization,
+    sample_fluid_scenario,
+    support_contract_from_mapping,
+)
 from sage_avo.structure import estimate_pwd_dip, monotonicity_report
 
 from .manifest import file_sha256, write_json
@@ -205,10 +214,12 @@ def generate_stage02_realization(
     arrays: dict[str, np.ndarray],
     reservoir_model: Any,
     fluid_calibration: Any | None = None,
+    fluid_property_validation: dict[str, Any] | None = None,
     config: dict[str, Any],
     output_directory: str | Path,
 ) -> dict[str, Any]:
     """Generate and save one complete, traceable Stage-02 realization package."""
+    realization_started = time.perf_counter()
     geology_seed = (
         int(realization_id)
         if geology_realization_id is None
@@ -222,25 +233,190 @@ def generate_stage02_realization(
             + float(mapping["intercept_m"])
         )
         depth_m = np.broadcast_to(depth_by_row[:, None], arrays["porosity"].shape)
-    geology = make_field_conditioned_realization(
-        sand_probability_base=arrays["sand_probability"],
-        porosity_base=arrays["porosity"],
-        rgt_base=arrays["rgt"],
-        strat_fraction_base=arrays["strat_fraction"],
-        reservoir_mask_base=arrays["reservoir_mask"],
-        elastic_background_base=arrays["elastic_background"],
-        elastic_blend_weight_base=arrays["elastic_blend_weight"],
-        reservoir_model=reservoir_model,
-        seed=geology_seed,
-        geology_config=config["geology"],
-        fluid_config=config["fluid_substitution"],
-        fluid_calibration=fluid_calibration,
-        depth_m=depth_m,
+    fluid_config = deepcopy(config["fluid_substitution"])
+    fluid_property_metadata = None
+    if fluid_property_validation is not None:
+        fluid_property_metadata = sample_fluid_scenario(
+            geology_seed,
+            fluid_property_validation["scenario_sampling"],
+        )
+        brine_state = fluid_property_metadata["brine"]
+        co2_state = fluid_property_metadata["co2"]
+        fluid_config.update(
+            {
+                "brine_bulk_modulus_gpa": brine_state["bulk_modulus_gpa"],
+                "brine_density_g_cc": brine_state["density_g_cc"],
+                "co2_bulk_modulus_gpa": co2_state["bulk_modulus_gpa"],
+                "co2_density_g_cc": co2_state["density_g_cc"],
+                "brie_exponent": fluid_property_metadata["brie_exponent"],
+            }
+        )
+        fluid_property_metadata.update(
+            {
+                "validation_id": fluid_property_validation["validation_id"],
+                "validation_status": fluid_property_validation["status"],
+                "claim_scope": fluid_property_validation["claim_scope"],
+            }
+        )
+    support_mapping = config.get("support_aware_acceptance", {})
+    support_enabled = bool(support_mapping.get("enabled", False))
+    support_contract = None
+    if support_enabled:
+        if fluid_calibration is None or fluid_property_metadata is None:
+            raise ValueError(
+                "Support-aware fluid generation requires the calibrated dry-frame "
+                "model and validated per-member fluid-property state"
+            )
+        support_contract = support_contract_from_mapping(
+            support_mapping, fluid_calibration
+        )
+    maximum_attempts = int(support_mapping.get("maximum_attempts", 1))
+    if maximum_attempts < 1:
+        raise ValueError("support-aware maximum_attempts must be positive")
+    retry_namespace = str(
+        support_mapping.get("retry_seed_namespace", "support_aware_generation")
     )
+    rejection_history: list[dict[str, Any]] = []
+    accepted_support: dict[str, Any] | None = None
+    accepted_attempt = 0
+    accepted_candidate_seed = geology_seed
+    accepted_candidate_seconds = 0.0
+    geology = None
+    for attempt_index in range(maximum_attempts):
+        candidate_seed = deterministic_candidate_seed(
+            geology_seed,
+            attempt_index,
+            namespace=retry_namespace,
+        )
+        candidate_started = time.perf_counter()
+        try:
+            candidate = make_field_conditioned_realization(
+                sand_probability_base=arrays["sand_probability"],
+                porosity_base=arrays["porosity"],
+                rgt_base=arrays["rgt"],
+                strat_fraction_base=arrays["strat_fraction"],
+                reservoir_mask_base=arrays["reservoir_mask"],
+                elastic_background_base=arrays["elastic_background"],
+                elastic_blend_weight_base=arrays["elastic_blend_weight"],
+                reservoir_model=reservoir_model,
+                seed=candidate_seed,
+                geology_config=config["geology"],
+                fluid_config=fluid_config,
+                fluid_calibration=fluid_calibration,
+                fluid_property_metadata=fluid_property_metadata,
+                depth_m=depth_m,
+            )
+            candidate_report = None
+            if support_contract is not None:
+                candidate_report = evaluate_candidate_support(
+                    elastic=candidate.elastic,
+                    elastic_brine=candidate.elastic_brine,
+                    shaliness=candidate.delta,
+                    plume_mask=candidate.plume_mask,
+                    co2_saturation=candidate.co2_saturation,
+                    time_ms=arrays["time_ms"],
+                    fluid_metadata=candidate.metadata["fluid"],
+                    calibration=fluid_calibration,
+                    physics=FluidRockPhysics(
+                        quartz_bulk_modulus_gpa=float(
+                            fluid_config["quartz_bulk_modulus_gpa"]
+                        ),
+                        clay_bulk_modulus_gpa=float(
+                            fluid_config["clay_bulk_modulus_gpa"]
+                        ),
+                        quartz_shear_modulus_gpa=float(
+                            fluid_config["quartz_shear_modulus_gpa"]
+                        ),
+                        clay_shear_modulus_gpa=float(
+                            fluid_config["clay_shear_modulus_gpa"]
+                        ),
+                        quartz_density_g_cc=float(
+                            fluid_config["quartz_density_g_cc"]
+                        ),
+                        clay_density_g_cc=float(
+                            fluid_config["clay_density_g_cc"]
+                        ),
+                        brine_bulk_modulus_gpa=float(
+                            fluid_config["brine_bulk_modulus_gpa"]
+                        ),
+                        co2_bulk_modulus_gpa=float(
+                            fluid_config["co2_bulk_modulus_gpa"]
+                        ),
+                        brine_density_g_cc=float(
+                            fluid_config["brine_density_g_cc"]
+                        ),
+                        co2_density_g_cc=float(fluid_config["co2_density_g_cc"]),
+                        brie_exponent=float(fluid_config["brie_exponent"]),
+                    ),
+                    contract=support_contract,
+                )
+            elapsed = time.perf_counter() - candidate_started
+        except ValueError as error:
+            if not support_enabled:
+                raise
+            rejection_history.append(
+                {
+                    "attempt_index": attempt_index,
+                    "candidate_seed": candidate_seed,
+                    "elapsed_seconds": time.perf_counter() - candidate_started,
+                    "rejection_reasons": ["candidate_physical_generation_error"],
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                }
+            )
+            continue
+        if candidate_report is not None and not candidate_report.accepted:
+            rejection_history.append(
+                {
+                    "attempt_index": attempt_index,
+                    "candidate_seed": candidate_seed,
+                    "elapsed_seconds": elapsed,
+                    "rejection_reasons": list(candidate_report.rejection_reasons),
+                    "support_statistics": candidate_report.statistics,
+                    "deformation": candidate.metadata["deformation"],
+                }
+            )
+            continue
+        geology = candidate
+        accepted_attempt = attempt_index
+        accepted_candidate_seed = candidate_seed
+        accepted_candidate_seconds = elapsed
+        accepted_support = (
+            candidate_report.to_dict() if candidate_report is not None else None
+        )
+        break
+    if geology is None:
+        reason_counts: dict[str, int] = {}
+        for rejection in rejection_history:
+            for reason in rejection["rejection_reasons"]:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        raise RuntimeError(
+            f"Realization {realization_id} exhausted {maximum_attempts} deterministic "
+            f"support-aware attempts: {reason_counts}"
+        )
+    support_metadata = {
+        "enabled": support_enabled,
+        "generation_master_seed": int(config["stage"]["seed"]),
+        "member_master_seed": geology_seed,
+        "attempt_index": accepted_attempt,
+        "candidate_seed": accepted_candidate_seed,
+        "maximum_attempts": maximum_attempts,
+        "retry_seed_namespace": retry_namespace,
+        "retry_seed_algorithm": (
+            "attempt 0 = member master seed; later attempts = low 63 non-sign "
+            "bits of SHA-256(namespace|member_master_seed|attempt_index), "
+            "little-endian"
+        ),
+        "rejected_candidate_count": len(rejection_history),
+        "rejection_history": rejection_history,
+        "accepted_support": accepted_support,
+        "contract": support_contract.to_dict() if support_contract is not None else None,
+    }
     is_v003 = "forward_model" in config
     forward_mapping = config["forward_model"] if is_v003 else config["forward"]
     backend = str(forward_mapping["local_backend"])
     specification = forward_specification_from_mapping(config) if is_v003 else None
+    forward_started = time.perf_counter()
     if backend == "numpy" and specification is not None:
         forward = forward_avo_dense_spec(*geology.elastic, specification)
     elif backend == "numpy":
@@ -261,6 +437,7 @@ def generate_stage02_realization(
         )
     else:
         raise ValueError("local_backend must be 'numpy' or 'madagascar'")
+    forward_seconds = time.perf_counter() - forward_started
     clean_stacks = forward.stacks.astype(np.float32)
     if is_v003:
         observation_mapping = config["observation_perturbations"]
@@ -381,11 +558,15 @@ def generate_stage02_realization(
         path,
         realization_id=np.int64(realization_id),
         geology_realization_id=np.int64(geology_seed),
+        member_master_seed=np.int64(geology_seed),
+        support_attempt_index=np.int64(accepted_attempt),
+        support_candidate_seed=np.int64(accepted_candidate_seed),
         observation_variant_id=np.int64(observation_variant_id),
         **payload,
     )
+    realization_seconds = time.perf_counter() - realization_started
     metadata = {
-        "generator_contract_version": 3 if is_v003 else 2,
+        "generator_contract_version": 4 if support_enabled else (3 if is_v003 else 2),
         "realization_id": realization_id,
         "seed": geology_seed,
         "geology_realization_id": geology_seed,
@@ -399,6 +580,19 @@ def generate_stage02_realization(
         "forward_specification_sha256": specification.sha256 if specification is not None else None,
         "observation_perturbations": noise_metadata,
         "geology": geology.metadata,
+        "support_aware_acceptance": support_metadata,
+        "timing_seconds": {
+            "rejected_candidates": float(
+                sum(float(row["elapsed_seconds"]) for row in rejection_history)
+            ),
+            "accepted_candidate": float(accepted_candidate_seconds),
+            "all_candidates": float(
+                sum(float(row["elapsed_seconds"]) for row in rejection_history)
+                + accepted_candidate_seconds
+            ),
+            "forward_operator": float(forward_seconds),
+            "complete_realization": float(realization_seconds),
+        },
         "horizon_coordinate_method": {
             "visible_interval": "first_and_last_warped_reservoir_mask_sample",
             "interval_outside_time_window": "source_horizon_mapped_by_coherent_deformation_and_clipped_to_grid",
@@ -501,13 +695,49 @@ def _write_generation_manifest(
     workers: int,
 ) -> dict[str, Any]:
     ordered = sorted(records, key=lambda item: int(item["realization_id"]))
+    support_enabled = bool(config.get("support_aware_acceptance", {}).get("enabled", False))
+    rejection_rows = [
+        {
+            "realization_id": int(record["realization_id"]),
+            "member_master_seed": int(
+                record["support_aware_acceptance"]["member_master_seed"]
+            ),
+            **rejection,
+        }
+        for record in ordered
+        for rejection in record.get("support_aware_acceptance", {}).get(
+            "rejection_history", []
+        )
+    ]
+    rejected_manifest = {
+        "schema_version": 1,
+        "stage": "02_support_aware_rejected_candidates",
+        "generation_config_sha256": _configuration_sha256(config),
+        "rejected_candidate_count": len(rejection_rows),
+        "records": rejection_rows,
+    }
+    rejected_path = destination / "rejected_candidates.json"
+    if support_enabled:
+        write_json(rejected_path, rejected_manifest)
+    timing = np.asarray(
+        [
+            float(record.get("timing_seconds", {}).get("complete_realization", np.nan))
+            for record in ordered
+        ],
+        dtype=float,
+    )
+    timing = timing[np.isfinite(timing)]
     manifest: dict[str, Any] = {
         "schema_version": 3 if "forward_model" in config else 2,
         "stage": "02_synthetic_avo_generation",
         "status": status,
         "master_seed": int(config["stage"]["seed"]),
         "member_seed_rule": (
-            "geology_seed = geology_realization_id; observation_seed = "
+            "attempt 0 = member_master_seed; rejected complete candidates use "
+            "the configured deterministic SHA-256 retry rule; observation_seed = "
+            "realization_id + configured seed_offset"
+            if support_enabled
+            else "geology_seed = geology_realization_id; observation_seed = "
             "realization_id + configured seed_offset"
             if "forward_model" in config
             else "realization_seed = realization_id"
@@ -544,6 +774,39 @@ def _write_generation_manifest(
             else config["forward"]["noise"]
         ),
         "parallel_workers": workers,
+        "support_aware_acceptance": (
+            {
+                "enabled": True,
+                "contract": deepcopy(config["support_aware_acceptance"]),
+                "accepted_realizations": len(ordered),
+                "rejected_candidates": len(rejection_rows),
+                "total_candidates": len(ordered) + len(rejection_rows),
+                "candidate_acceptance_rate": (
+                    len(ordered) / max(len(ordered) + len(rejection_rows), 1)
+                ),
+                "candidate_rejection_rate": (
+                    len(rejection_rows) / max(len(ordered) + len(rejection_rows), 1)
+                ),
+                "attempt_indices": [
+                    int(record["support_aware_acceptance"]["attempt_index"])
+                    for record in ordered
+                ],
+                "rejected_candidate_manifest": rejected_path.name,
+                "rejected_candidate_manifest_sha256": file_sha256(rejected_path),
+            }
+            if support_enabled
+            else {"enabled": False}
+        ),
+        "realization_timing_seconds": (
+            {
+                "count": int(timing.size),
+                "mean": float(np.mean(timing)),
+                "median": float(np.median(timing)),
+                "p95": float(np.quantile(timing, 0.95)),
+            }
+            if timing.size
+            else None
+        ),
         "source_snapshot": deepcopy(config.get("source_snapshot")),
         "records": ordered,
     }
@@ -580,6 +843,7 @@ def generate_stage02_dataset(
         paths["work_data_root"], inputs["dataset_id"], inputs["structure_version"]
     )
     fluid_calibration = None
+    fluid_validation = None
     fluid_mode = str(config["fluid_substitution"].get("mode", ""))
     calibrated_modes = {
         "calibrated_differential_gassmann",
@@ -613,12 +877,16 @@ def generate_stage02_dataset(
                 f"temperature/fluid-property validation artifact at {validation_path}"
             )
         fluid_validation = json.loads(validation_path.read_text(encoding="utf-8"))
-        if fluid_validation.get("status") != "passed":
-            raise ValueError("Fluid-property validation artifact has not passed")
+        accepted_statuses = {"field_validated", "scenario_validated"}
+        if fluid_validation.get("status") not in accepted_statuses:
+            raise ValueError(
+                "Fluid-property validation status must be field_validated or "
+                "scenario_validated"
+            )
         if fluid_validation.get("calibration_id") != fluid_calibration.calibration_id:
             raise ValueError("Fluid-property validation calibration ID does not match")
-        if fluid_validation.get("pressure_temperature_source") in {None, "generic", "unavailable"}:
-            raise ValueError("Fluid-property validation lacks a measured or independently validated P/T source")
+        if "scenario_sampling" not in fluid_validation:
+            raise ValueError("Fluid-property validation lacks reproducible scenario ranges")
         source_hashes[f"fluid_calibration/{calibration_path.name}"] = file_sha256(
             calibration_path
         )
@@ -649,6 +917,19 @@ def generate_stage02_dataset(
             "stage.realization_count must equal geology_realization_count times "
             "observation_variants_per_geology"
         )
+    configured_master_seeds = stage.get("member_master_seeds")
+    if configured_master_seeds is not None:
+        master_seeds = [int(value) for value in configured_master_seeds]
+        if observation_variants != 1:
+            raise ValueError(
+                "Explicit member_master_seeds require one observation variant per geology"
+            )
+        if len(master_seeds) < count:
+            raise ValueError(
+                "stage.member_master_seeds must contain at least realization_count entries"
+            )
+    else:
+        master_seeds = [offset + index for index in range(count)]
     configuration_sha256 = _configuration_sha256(config)
     records: list[dict[str, Any]] = []
     pending: list[int] = []
@@ -675,11 +956,14 @@ def generate_stage02_dataset(
         member_index = realization_id - offset
         return {
             "realization_id": realization_id,
-            "geology_realization_id": offset + member_index // observation_variants,
+            "geology_realization_id": master_seeds[
+                member_index // observation_variants
+            ],
             "observation_variant_id": member_index % observation_variants,
             "arrays": arrays,
             "reservoir_model": reservoir_model,
             "fluid_calibration": fluid_calibration,
+            "fluid_property_validation": fluid_validation,
             "config": config,
             "output_directory": destination,
         }

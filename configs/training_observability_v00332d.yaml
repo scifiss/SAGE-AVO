@@ -1,0 +1,66 @@
+schema_version: 1
+revision: "3.3.2d"
+enabled: true
+scientific_methodology_changed: true
+scientific_change_scope:
+  - rejected_auxiliary_graph_smoothness_removed_from_optimization
+  - differentiable_exact_pp_reimplemented_as_boundary_matrix_solve
+
+frozen_inputs:
+  stage02_version: v00331_production100_support_aware
+  stage02_manifest_sha256: 4943684922380b0d82c56d7b5595ad8a1be8f0770be3f41bb0c6dae6216aa46c
+  stage02_final_qc_sha256: 61077abca822e621446ab8645354bb4516b98abf504bba94f53191a83cec3549
+  stage03_version: ds_v00331_production100_support_aware
+  stage03_manifest_sha256: 1afe64debc9b0901afde88b327a1c04088c1a2a8e51efafadd38bc5e6ba845ee
+  stage03_freeze_record_sha256: 2a84c9984460e16a76c5a3266a7a19076170d1788d08e15c0b4930c2e9174dfe
+  patch_index_sha256: 1570ed60cd6ca72f8c1395fde689b1b7739eee15826dbb7ff31d52cdc8752479
+  split_ids_sha256: a23f87fda90405a9e5faf0e8df070b0358bee9d5583b8b7871f3b1f71ce9210e
+  normalization_sha256: 8e91b6ba7f14aa1ee58e2e4902890006d8df254cdf8ffaf63ff9433ab03aad90
+  source_snapshot_id: 3cea3dff45296b97dfe8374695fb09dd09ac50a12f2d80599806e6af64b00456
+  calibration_id: v0033_58a5fe39a11c4fe66431
+
+diagnostic_checkpoints:
+  epochs: [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
+  gradient_epochs: [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
+  visual_epochs: [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
+  cosine_epochs: [1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100, 105, 110, 115, 120]
+  health_gate_epochs: [5, 100]
+
+fixed_validation:
+  categories:
+    - background
+    - high_dip
+    - reservoir
+    - high_avo_gradient_change
+    - facies_boundary
+  require_native_physics_examples: 5
+  include_non_native_scales: [[40, 80], [64, 128]]
+  whole_realization_count: 3
+  selection_rule: highest category score then lowest realization/top/left
+
+diagnostics:
+  deterministic_time: 0.5
+  flow_integration_steps: 20
+  graph_attention_top_fraction: 0.10
+  graph_low_rgt_mismatch_quantile: 0.25
+  graph_high_avo_similarity_quantile: 0.75
+  gradient_parameter_groups:
+    - shared_cnn_encoder
+    - graph_branch
+    - graph_node_projection
+    - transformerconv_layer_1
+    - transformerconv_layer_2
+    - graph_reinjected_cnn_stream
+    - elastic_flow_decoder
+    - segmentation_decoder
+    - all_trainable_parameters
+
+health_classification:
+  improving_relative_reduction: 0.05
+  near_floor_normalized_distance: 0.10
+  gradient_starved_fraction: 0.01
+  severe_conflict_cosine: -0.30
+  unstable_relative_increase: 0.25
+
+outputs:
+  version: revision332d_final_stable_training

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 
 import torch
 from torch import Tensor, nn
@@ -14,8 +14,9 @@ from sage_avo.forward.specification import ForwardModelSpecification
 from .flow import straight_path
 from .losses import (
     AdaptiveTaskWeighter,
+    GraphObjectiveSettings,
     LossWeights,
-    edge_smoothness,
+    graph_structure_loss,
     legacy_instance_contrastive_loss,
     multitask_loss,
     physics_loss,
@@ -93,12 +94,21 @@ def _forward_objective(
     deterministic_contrastive: bool,
     contrastive_generator: torch.Generator | None,
     adaptive_weighter: AdaptiveTaskWeighter | None,
+    graph_objective: GraphObjectiveSettings = GraphObjectiveSettings(),
 ) -> tuple[Tensor, dict[str, Tensor]]:
     state, target_velocity = straight_path(values["low"], values["target"], time)
     output = model(state, time, values["avo"], values["low"], values["rgt"])
     predicted_full = output.velocity + values["low"]
     structural = (
-        edge_smoothness(predicted_full, output.edge_indices, output.edge_weights)
+        graph_structure_loss(
+            predicted_full,
+            values["target"],
+            values["rgt"],
+            values["segmentation"],
+            output.edge_indices,
+            output.edge_weights,
+            graph_objective,
+        )
         if weights.structure > 0
         else predicted_full.new_zeros(())
     )
@@ -192,6 +202,7 @@ def train_step(
     contrastive: ContrastiveSettings = ContrastiveSettings(),
     contrastive_generator: torch.Generator | None = None,
     adaptive_weighter: AdaptiveTaskWeighter | None = None,
+    graph_objective: GraphObjectiveSettings = GraphObjectiveSettings(),
 ) -> StepMetrics:
     """Run one stochastic-time SAGE-AVO optimization step."""
     device = next(model.parameters()).device
@@ -209,6 +220,7 @@ def train_step(
         deterministic_contrastive=False,
         contrastive_generator=contrastive_generator,
         adaptive_weighter=adaptive_weighter,
+        graph_objective=graph_objective,
     )
     optimizer.zero_grad(set_to_none=True)
     total.backward()
@@ -242,28 +254,32 @@ def train_epoch(
     contrastive_generator: torch.Generator | None = None,
     adaptive_weighter: AdaptiveTaskWeighter | None = None,
     max_batches: int | None = None,
+    metrics_observer: Callable[[dict[str, Tensor], StepMetrics], None] | None = None,
+    graph_objective: GraphObjectiveSettings = GraphObjectiveSettings(),
 ) -> StepMetrics:
     model.train()
     results: list[StepMetrics] = []
     for batch_index, batch in enumerate(batches):
         if max_batches is not None and batch_index >= max_batches:
             break
-        results.append(
-            train_step(
-                model,
-                batch,
-                optimizer,
-                normalization,
-                weights,
-                class_weights,
-                gradient_clip,
-                time_generator,
-                physics,
-                contrastive,
-                contrastive_generator,
-                adaptive_weighter,
-            )
+        result = train_step(
+            model,
+            batch,
+            optimizer,
+            normalization,
+            weights,
+            class_weights,
+            gradient_clip,
+            time_generator,
+            physics,
+            contrastive,
+            contrastive_generator,
+            adaptive_weighter,
+            graph_objective,
         )
+        if metrics_observer is not None:
+            metrics_observer(batch, result)
+        results.append(result)
     return _average_metrics(results)
 
 
@@ -280,6 +296,8 @@ def validate_epoch(
     contrastive: ContrastiveSettings = ContrastiveSettings(),
     adaptive_weighter: AdaptiveTaskWeighter | None = None,
     max_batches: int | None = None,
+    metrics_observer: Callable[[dict[str, Tensor], StepMetrics], None] | None = None,
+    graph_objective: GraphObjectiveSettings = GraphObjectiveSettings(),
 ) -> StepMetrics:
     """Evaluate the full objective at a deterministic interior-time grid."""
     model.eval()
@@ -308,6 +326,10 @@ def validate_epoch(
                 deterministic_contrastive=True,
                 contrastive_generator=None,
                 adaptive_weighter=adaptive_weighter,
+                graph_objective=graph_objective,
             )
-            results.append(_metrics(total, terms))
+            result = _metrics(total, terms)
+            if metrics_observer is not None:
+                metrics_observer(batch, result)
+            results.append(result)
     return _average_metrics(results)

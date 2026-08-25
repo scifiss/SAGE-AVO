@@ -16,13 +16,17 @@ CURRENT_ANGLE_BANDS = PRODUCTION_ANGLE_BANDS
 LEGACY_005_ANGLE_BANDS = PRODUCTION_ANGLE_BANDS
 
 
-def exact_zoeppritz_pp(vp: Tensor, vs: Tensor, density: Tensor, angles_degrees: Tensor) -> Tensor:
-    """Return exact real-component P-P reflectivity as ``[B, angle, H, W]``.
+def exact_zoeppritz_pp_closed_form(
+    vp: Tensor,
+    vs: Tensor,
+    density: Tensor,
+    angles_degrees: Tensor,
+) -> Tensor:
+    """Return the legacy closed-form exact P-P reflectivity.
 
-    Complex vertical slownesses are retained above critical incidence so this
-    differentiable operator follows the same convention as the NumPy Stage-02
-    solver. Clamping the square-root arguments to a real pre-critical branch
-    produces incorrect high-angle amplitudes at strong velocity contrasts.
+    This implementation is retained only for stable-state regression checks.
+    Production differentiation uses :func:`exact_zoeppritz_pp_matrix` because
+    the quotient form can produce non-finite ``DivBackward0`` gradients.
     """
     if vp.ndim == 4:
         vp, vs, density = vp[:, 0], vs[:, 0], density[:, 0]
@@ -54,6 +58,126 @@ def exact_zoeppritz_pp(vp: Tensor, vs: Tensor, density: Tensor, angles_degrees: 
         outputs.append((numerator / (denominator + 1e-12)).real)
     reflectivity = torch.stack(outputs, dim=1)
     return F.pad(reflectivity, (0, 0, 1, 0))
+
+
+def _zoeppritz_boundary_system(
+    vp1: Tensor,
+    vs1: Tensor,
+    rho1: Tensor,
+    vp2: Tensor,
+    vs2: Tensor,
+    rho2: Tensor,
+    angle_degrees: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Construct the exact isotropic P-SV boundary-condition system.
+
+    The four rows enforce horizontal displacement, vertical displacement,
+    tangential traction, and normal traction continuity.  Complex vertical
+    slownesses retain the physical post-critical branch used by Stage 02 and
+    Madagascar ``sfzoeppritz2``.
+    """
+    real_dtype = vp1.dtype
+    complex_dtype = torch.complex128 if real_dtype == torch.float64 else torch.complex64
+    theta1 = torch.deg2rad(angle_degrees.to(device=vp1.device, dtype=real_dtype))
+    ray_parameter = torch.sin(theta1) / vp1
+    ray_parameter_squared = ray_parameter.square()
+
+    sin_theta1 = (ray_parameter * vp1).to(complex_dtype)
+    sin_theta2 = (ray_parameter * vp2).to(complex_dtype)
+    sin_phi1 = (ray_parameter * vs1).to(complex_dtype)
+    sin_phi2 = (ray_parameter * vs2).to(complex_dtype)
+    cos_theta1 = vp1 * torch.sqrt(
+        (vp1.reciprocal().square() - ray_parameter_squared).to(complex_dtype)
+    )
+    cos_theta2 = vp2 * torch.sqrt(
+        (vp2.reciprocal().square() - ray_parameter_squared).to(complex_dtype)
+    )
+    cos_phi1 = vs1 * torch.sqrt(
+        (vs1.reciprocal().square() - ray_parameter_squared).to(complex_dtype)
+    )
+    cos_phi2 = vs2 * torch.sqrt(
+        (vs2.reciprocal().square() - ray_parameter_squared).to(complex_dtype)
+    )
+
+    matrix = torch.empty((*vp1.shape, 4, 4), dtype=complex_dtype, device=vp1.device)
+    matrix[..., 0, 0] = -sin_theta1
+    matrix[..., 0, 1] = -cos_phi1
+    matrix[..., 0, 2] = sin_theta2
+    matrix[..., 0, 3] = cos_phi2
+    matrix[..., 1, 0] = cos_theta1
+    matrix[..., 1, 1] = -sin_phi1
+    matrix[..., 1, 2] = cos_theta2
+    matrix[..., 1, 3] = -sin_phi2
+    matrix[..., 2, 0] = 2.0 * rho1 * vs1 * sin_phi1 * cos_theta1
+    matrix[..., 2, 1] = rho1 * vs1 * (1.0 - 2.0 * sin_phi1.square())
+    matrix[..., 2, 2] = 2.0 * rho2 * vs2 * sin_phi2 * cos_theta2
+    matrix[..., 2, 3] = rho2 * vs2 * (1.0 - 2.0 * sin_phi2.square())
+    matrix[..., 3, 0] = -rho1 * vp1 * (1.0 - 2.0 * sin_phi1.square())
+    matrix[..., 3, 1] = rho1 * vs1 * (2.0 * sin_phi1 * cos_phi1)
+    matrix[..., 3, 2] = rho2 * vp2 * (1.0 - 2.0 * sin_phi2.square())
+    matrix[..., 3, 3] = -rho2 * vs2 * (2.0 * sin_phi2 * cos_phi2)
+
+    right_hand_side = torch.empty((*vp1.shape, 4), dtype=complex_dtype, device=vp1.device)
+    right_hand_side[..., 0] = sin_theta1
+    right_hand_side[..., 1] = cos_theta1
+    right_hand_side[..., 2] = 2.0 * rho1 * vs1 * sin_phi1 * cos_theta1
+    right_hand_side[..., 3] = rho1 * vp1 * (1.0 - 2.0 * sin_phi1.square())
+    return matrix, right_hand_side
+
+
+def exact_zoeppritz_pp_matrix(
+    vp: Tensor,
+    vs: Tensor,
+    density: Tensor,
+    angles_degrees: Tensor,
+) -> Tensor:
+    """Solve exact P-P Zoeppritz boundary systems as ``[B, angle, H, W]``.
+
+    Each angle is solved as a batched complex 4-by-4 system over all batch,
+    time-interface, and trace locations.  Row equilibration multiplies each
+    boundary equation and its right-hand side by the same nonzero factor; it
+    improves floating-point conditioning without changing the exact solution
+    or introducing a denominator regularizer.
+    """
+    if vp.ndim == 4:
+        vp, vs, density = vp[:, 0], vs[:, 0], density[:, 0]
+    if vp.ndim != 3 or vp.shape != vs.shape or vp.shape != density.shape:
+        raise ValueError("vp, vs, density must have matching [B, H, W] shapes")
+    if not vp.is_floating_point():
+        raise TypeError("Elastic properties must use a floating-point dtype")
+    vp1, vp2 = vp[:, :-1], vp[:, 1:]
+    vs1, vs2 = vs[:, :-1], vs[:, 1:]
+    rho1, rho2 = density[:, :-1], density[:, 1:]
+    outputs = []
+    for angle in angles_degrees:
+        matrix, right_hand_side = _zoeppritz_boundary_system(
+            vp1,
+            vs1,
+            rho1,
+            vp2,
+            vs2,
+            rho2,
+            angle,
+        )
+        row_scale = torch.linalg.vector_norm(matrix, dim=-1).clamp_min(
+            torch.finfo(vp.dtype).tiny
+        )
+        equilibrated_matrix = matrix / row_scale.unsqueeze(-1)
+        equilibrated_right_hand_side = right_hand_side / row_scale
+        solution = torch.linalg.solve(equilibrated_matrix, equilibrated_right_hand_side)
+        outputs.append(solution[..., 0].real)
+    reflectivity = torch.stack(outputs, dim=1)
+    return F.pad(reflectivity, (0, 0, 1, 0))
+
+
+def exact_zoeppritz_pp(
+    vp: Tensor,
+    vs: Tensor,
+    density: Tensor,
+    angles_degrees: Tensor,
+) -> Tensor:
+    """Return production exact P-P reflectivity using the matrix solver."""
+    return exact_zoeppritz_pp_matrix(vp, vs, density, angles_degrees)
 
 
 def _ricker(

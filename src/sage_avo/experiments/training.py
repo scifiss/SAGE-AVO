@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,9 @@ from torch import Tensor
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from sage_avo.config import seed_everything
+from sage_avo.diagnostics.accounting import EpochLossObserver
+from sage_avo.diagnostics.contracts import verify_frozen_revision331_inputs
+from sage_avo.diagnostics.live_logging import BatchProgressLogger, log_epoch_observability
 from sage_avo.forward import forward_specification_from_mapping
 from sage_avo.data.augmentation import AugmentationConfig
 from sage_avo.data.indexed_dataset import IndexedRealizationPatches
@@ -32,7 +37,11 @@ from sage_avo.training.engine import (
     train_epoch,
     validate_epoch,
 )
-from sage_avo.training.losses import AdaptiveTaskWeighter, LossWeights
+from sage_avo.training.losses import (
+    AdaptiveTaskWeighter,
+    GraphObjectiveSettings,
+    LossWeights,
+)
 from sage_avo.training.schedules import Curriculum
 from sage_avo.training.selection import (
     CheckpointSelectionState,
@@ -91,8 +100,7 @@ def physics_settings_from_config(config: dict[str, Any]) -> PhysicsSettings:
         return PhysicsSettings(
             angles_degrees=specification.angles_degrees,
             bands_degrees=tuple(
-                (band.minimum_degrees, band.maximum_degrees)
-                for band in specification.bands
+                (band.minimum_degrees, band.maximum_degrees) for band in specification.bands
             ),
             wavelet_hz=specification.wavelets[0].peak_frequency_hz,
             dt_seconds=specification.dt_seconds,
@@ -134,6 +142,19 @@ def loss_weights_from_config(config: dict[str, Any], physics_weight: float) -> L
         structure=float(values["structure"]),
         density=float(values["density_initial"]),
     )
+
+
+def graph_objective_from_config(config: dict[str, Any]) -> GraphObjectiveSettings:
+    """Resolve the frozen graph-objective selection condition."""
+    return GraphObjectiveSettings.from_mapping(config["training"].get("graph_objective"))
+
+
+def _module_state_sha256(model: torch.nn.Module) -> str:
+    digest = hashlib.sha256()
+    for name, value in model.state_dict().items():
+        digest.update(name.encode("utf-8"))
+        digest.update(value.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
 
 
 def curriculum_from_config(config: dict[str, Any]) -> Curriculum:
@@ -340,13 +361,7 @@ def _whole_realization_validation_metrics(
             valid = np.asarray(archive["valid_mask"], dtype=bool)
         physical_rmse = np.asarray(
             [
-                np.sqrt(
-                    np.mean(
-                        np.square(
-                            prediction[channel][valid] - target[channel][valid]
-                        )
-                    )
-                )
+                np.sqrt(np.mean(np.square(prediction[channel][valid] - target[channel][valid])))
                 for channel in range(3)
             ]
         )
@@ -357,9 +372,7 @@ def _whole_realization_validation_metrics(
             expected = (target_labels == label) & valid
             union = np.count_nonzero(predicted | expected)
             class_iou.append(
-                float(np.count_nonzero(predicted & expected) / union)
-                if union
-                else np.nan
+                float(np.count_nonzero(predicted & expected) / union) if union else np.nan
             )
         miou = float(np.nanmean(class_iou))
         per_realization.append(
@@ -371,9 +384,7 @@ def _whole_realization_validation_metrics(
                 "miou": miou,
             }
         )
-    aggregate_rmse = np.mean(
-        [record["normalized_rmse"] for record in per_realization], axis=0
-    )
+    aggregate_rmse = np.mean([record["normalized_rmse"] for record in per_realization], axis=0)
     aggregate_miou = float(np.mean([record["miou"] for record in per_realization]))
     return {
         "criterion": whole_realization_criterion(aggregate_rmse, aggregate_miou),
@@ -402,6 +413,9 @@ def train_controlled_variant(
     run_name: str | None = None,
     resume_from: str | Path | None = None,
     allow_operator_validation_subset: bool = False,
+    stop_after_epoch: int | None = None,
+    finite_state_check_batches: tuple[int, ...] = (),
+    abort_on_nonfinite: bool = False,
 ) -> Path:
     """Train one SAGE-AVO condition with the configured complete procedure."""
     configured_physics_weight = float(config["training"]["loss_weights"]["physics"])
@@ -424,13 +438,30 @@ def train_controlled_variant(
     dataset_root = Path(dataset_directory)
     experiment_root = Path(experiment_directory)
     run_directory = experiment_root / "runs" / (run_name or variant)
+    observability_config = config.get("observability")
+    observability_enabled = bool(
+        observability_config and observability_config.get("enabled", False)
+    )
+    if observability_enabled:
+        private_artifact_root = dataset_root.parents[3]
+        frozen_verification = verify_frozen_revision331_inputs(
+            dataset_directory=dataset_root,
+            private_artifact_root=private_artifact_root,
+            observability_config=observability_config,
+        )
+    else:
+        frozen_verification = None
     normalization = json.loads((dataset_root / "normalization.json").read_text(encoding="utf-8"))
     split_ids = json.loads((dataset_root / "split_ids.json").read_text(encoding="utf-8"))
     dataset_manifest = json.loads(
         (dataset_root / "dataset_manifest.json").read_text(encoding="utf-8")
     )
     source_status = dataset_manifest.get("source_stage02_status")
-    if source_status is not None and source_status != "complete" and not allow_operator_validation_subset:
+    if (
+        source_status is not None
+        and source_status != "complete"
+        and not allow_operator_validation_subset
+    ):
         raise RuntimeError(
             "Production training requires a complete Stage-02 corpus; "
             f"the dataset records source status {source_status!r}. "
@@ -440,6 +471,9 @@ def train_controlled_variant(
     run_directory.mkdir(parents=True, exist_ok=True)
     training_config = config["training"]
     epochs = int(epochs_override or training_config["epochs"])
+    run_end_epoch = min(epochs, int(stop_after_epoch or epochs))
+    if run_end_epoch <= 0:
+        raise ValueError("stop_after_epoch must be positive")
 
     augmentation_generator = torch.Generator().manual_seed(seed + 11)
     sampler_generator = torch.Generator().manual_seed(seed + 13)
@@ -483,11 +517,13 @@ def train_controlled_variant(
     )
 
     physics_settings = physics_settings_from_config(config)
+    graph_objective_settings = graph_objective_from_config(config)
     model = build_sage_avo_variant(
         variant,
         **sage_avo_model_kwargs(config),
     ).to(device)
     model.set_norm_stats(normalization)
+    initialization_sha256 = _module_state_sha256(model)
     base_weights = loss_weights_from_config(config, float(definition.physics_weight))
     curriculum = curriculum_from_config(config)
     is_v003 = int(config.get("schema_version", 2)) >= 3
@@ -529,9 +565,7 @@ def train_controlled_variant(
     validation_time_grid = tuple(float(value) for value in training_config["validation_time_grid"])
     sampling_config = training_config["physics_guided_sampling"]
     guidance_scale = (
-        float(sampling_config["guidance_scale"])
-        if bool(sampling_config["enabled"])
-        else 0.0
+        float(sampling_config["guidance_scale"]) if bool(sampling_config["enabled"]) else 0.0
     )
 
     metric_definitions = {
@@ -584,6 +618,26 @@ def train_controlled_variant(
     )
     manifest["source_stage02_status"] = source_status or "not_applicable"
     manifest["operator_validation_subset_allowed"] = bool(allow_operator_validation_subset)
+    manifest["graph_objective"] = {
+        **graph_objective_settings.__dict__,
+        "model_input_at_inference": False,
+        "synthetic_truth_used_by_model_forward": False,
+    }
+    manifest["model_initialization_sha256"] = initialization_sha256
+    if observability_enabled:
+        manifest["observability"] = {
+            "revision": observability_config["revision"],
+            "scientific_methodology_changed": bool(
+                observability_config.get("scientific_methodology_changed", False)
+            ),
+            "frozen_input_verification": frozen_verification,
+            "diagnostic_sample_manifest": observability_config.get("diagnostic_sample_manifest"),
+            "diagnostic_checkpoint_epochs": observability_config["diagnostic_checkpoints"][
+                "epochs"
+            ],
+            "separate_process_diagnostics": True,
+            "training_class_weights": class_weights.detach().cpu().tolist(),
+        }
     if is_v003:
         manifest["checkpoint_selection_state"] = selection_state.to_dict()
         checkpointing = training_config["checkpointing"]
@@ -683,12 +737,105 @@ def train_controlled_variant(
     append = resume_from is not None and log_path.exists()
     mode = "a" if append else "w"
     last_validation = float(resumed_metrics.get("validation_objective", np.nan))
+    last_completed_epoch = start_epoch
+    training_step_count = 0
+    requested_finite_checks = {int(value) for value in finite_state_check_batches}
+    if any(value < 1 for value in requested_finite_checks):
+        raise ValueError("finite_state_check_batches must contain positive indices")
+    finite_state_rows: list[dict[str, Any]] = []
+
+    def record_finite_state(metrics: StepMetrics) -> None:
+        nonlocal training_step_count
+        training_step_count += 1
+        metric_values = metrics.__dict__
+        metrics_finite = all(math.isfinite(float(value)) for value in metric_values.values())
+        should_inspect_state = training_step_count in requested_finite_checks
+        if not should_inspect_state and not (abort_on_nonfinite and not metrics_finite):
+            return
+        parameter_tensors = list(model.parameters())
+        gradient_tensors = [
+            parameter.grad for parameter in parameter_tensors if parameter.grad is not None
+        ]
+        optimizer_tensors = [
+            value
+            for state in optimizer.state.values()
+            for value in state.values()
+            if isinstance(value, Tensor)
+        ]
+
+        def all_finite(values: list[Tensor]) -> bool:
+            return all(bool(torch.isfinite(value).all()) for value in values)
+
+        row = {
+            "batch": training_step_count,
+            "metrics_finite": metrics_finite,
+            "total_loss": float(metrics.total),
+            "physics_loss": float(metrics.physics),
+            "parameters_finite": all_finite(parameter_tensors),
+            "gradients_finite": all_finite(gradient_tensors),
+            "optimizer_state_finite": all_finite(optimizer_tensors),
+            "parameter_tensor_count": len(parameter_tensors),
+            "gradient_tensor_count": len(gradient_tensors),
+            "optimizer_tensor_count": len(optimizer_tensors),
+        }
+        finite_state_rows.append(row)
+        write_json(
+            run_directory / "finite_state_checks.json",
+            {
+                "requested_batches": sorted(requested_finite_checks),
+                "abort_on_nonfinite": abort_on_nonfinite,
+                "checks": finite_state_rows,
+            },
+        )
+        if abort_on_nonfinite and not all(
+            row[name]
+            for name in (
+                "metrics_finite",
+                "parameters_finite",
+                "gradients_finite",
+                "optimizer_state_finite",
+            )
+        ):
+            raise FloatingPointError(
+                f"Non-finite training state at optimizer batch {training_step_count}: {row}"
+            )
+
     with log_path.open(mode, newline="", encoding="utf-8") as stream:
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         if not append:
             writer.writeheader()
-        for epoch_index in range(start_epoch, epochs):
+        for epoch_index in range(start_epoch, run_end_epoch):
             effective_weights = curriculum.weights_for_epoch(base_weights, epoch_index, epochs)
+            train_observer = (
+                EpochLossObserver(effective_weights.physics) if observability_enabled else None
+            )
+            progress_observer = (
+                BatchProgressLogger(
+                    epoch=epoch_index + 1,
+                    total_epochs=epochs,
+                    total_batches=min(
+                        len(train_loader),
+                        max_train_batches if max_train_batches is not None else len(train_loader),
+                    ),
+                    physics_weight=effective_weights.physics,
+                    interval_batches=50,
+                )
+                if observability_enabled
+                else None
+            )
+            validation_observer = (
+                EpochLossObserver(effective_weights.physics) if observability_enabled else None
+            )
+
+            def observe_training_batch(
+                batch: dict[str, Tensor], metrics: StepMetrics
+            ) -> None:
+                record_finite_state(metrics)
+                if train_observer is not None:
+                    train_observer(batch, metrics)
+                if progress_observer is not None:
+                    progress_observer(batch, metrics)
+
             train_metrics = train_epoch(
                 model,
                 train_loader,
@@ -703,6 +850,8 @@ def train_controlled_variant(
                 contrastive_generator,
                 adaptive_weighter,
                 max_train_batches,
+                observe_training_batch if observability_enabled else None,
+                graph_objective_settings,
             )
             validation_metrics = validate_epoch(
                 model,
@@ -715,6 +864,8 @@ def train_controlled_variant(
                 contrastive=contrastive_settings,
                 adaptive_weighter=adaptive_weighter,
                 max_batches=max_validation_batches,
+                metrics_observer=validation_observer,
+                graph_objective=graph_objective_settings,
             )
             last_validation = validation_metrics.total
             generator_states = {
@@ -724,6 +875,7 @@ def train_controlled_variant(
                 "contrastive": contrastive_generator.get_state(),
             }
             epoch_number = epoch_index + 1
+            last_completed_epoch = epoch_number
             save_best_flow = False
             if not is_v003 and validation_metrics.total < best_flow:
                 best_flow = validation_metrics.total
@@ -755,8 +907,7 @@ def train_controlled_variant(
                     device,
                     steps=int(training_config["sample_steps_validation"]),
                     max_batches=(
-                        max_validation_batches
-                        or int(training_config["validation_sample_batches"])
+                        max_validation_batches or int(training_config["validation_sample_batches"])
                     ),
                     guidance_scale=guidance_scale,
                 )
@@ -779,9 +930,12 @@ def train_controlled_variant(
             whole_rmse = [np.nan] * 3
             whole_miou = np.nan
             whole_metrics: dict[str, Any] | None = None
-            if is_v003 and epoch_number % int(
-                training_config["checkpointing"]["whole_validation_every_epochs"]
-            ) == 0:
+            if (
+                is_v003
+                and epoch_number
+                % int(training_config["checkpointing"]["whole_validation_every_epochs"])
+                == 0
+            ):
                 whole_metrics = _whole_realization_validation_metrics(
                     model,
                     dataset_root=dataset_root,
@@ -801,8 +955,7 @@ def train_controlled_variant(
                     "whole_realization", whole_criterion, epoch_number
                 )
                 write_json(
-                    run_directory
-                    / f"whole_validation_metrics_epoch_{epoch_number:04d}.json",
+                    run_directory / f"whole_validation_metrics_epoch_{epoch_number:04d}.json",
                     {
                         "epoch": epoch_number,
                         "selection_split": "validation",
@@ -838,9 +991,7 @@ def train_controlled_variant(
                         "validation_weighted_contrastive_contribution": fixed_contributions[
                             "contrastive"
                         ],
-                        "validation_weighted_physics_contribution": fixed_contributions[
-                            "physics"
-                        ],
+                        "validation_weighted_physics_contribution": fixed_contributions["physics"],
                         "validation_weighted_structure_contribution": fixed_contributions[
                             "structure"
                         ],
@@ -861,6 +1012,19 @@ def train_controlled_variant(
                 )
             writer.writerow(row)
             stream.flush()
+            if observability_enabled:
+                if train_observer is None or validation_observer is None:
+                    raise RuntimeError("Observability observer was not initialized")
+                log_epoch_observability(
+                    directory=run_directory / "diagnostics",
+                    epoch=epoch_number,
+                    train_metrics=train_metrics,
+                    validation_metrics=validation_metrics,
+                    weights=effective_weights,
+                    train_observer=train_observer,
+                    validation_observer=validation_observer,
+                    learning_rate=float(optimizer.param_groups[0]["lr"]),
+                )
             scheduler.step()
             if save_best_flow:
                 save_checkpoint(
@@ -923,9 +1087,7 @@ def train_controlled_variant(
                     optimizer,
                     epoch_number,
                     {
-                        **checkpoint_metadata(
-                            "segmentation", sample_miou, epoch_number
-                        ),
+                        **checkpoint_metadata("segmentation", sample_miou, epoch_number),
                         "miou": sample_miou,
                         "class_iou": sample_class_iou,
                         "class_dice": sample_class_dice,
@@ -942,9 +1104,7 @@ def train_controlled_variant(
                     optimizer,
                     epoch_number,
                     {
-                        **checkpoint_metadata(
-                            "whole_realization", whole_criterion, epoch_number
-                        ),
+                        **checkpoint_metadata("whole_realization", whole_criterion, epoch_number),
                         "normalized_rmse": whole_rmse,
                         "miou": whole_miou,
                         "realization_ids": whole_validation_ids,
@@ -974,6 +1134,31 @@ def train_controlled_variant(
                     adaptive_weighter=adaptive_weighter,
                     generator_states=generator_states,
                 )
+            diagnostic_epochs = (
+                set(
+                    int(value) for value in observability_config["diagnostic_checkpoints"]["epochs"]
+                )
+                if observability_enabled
+                else set()
+            )
+            if epoch_number in diagnostic_epochs:
+                save_checkpoint(
+                    run_directory / "diagnostic_checkpoints" / f"epoch_{epoch_number:04d}.pt",
+                    model,
+                    optimizer,
+                    epoch_number,
+                    {
+                        "criterion_name": "diagnostic_schedule",
+                        "criterion_formula": (
+                            "predeclared observability checkpoint; not a selection criterion"
+                        ),
+                        "validation_fixed_objective": fixed_contributions["total"],
+                    },
+                    config,
+                    scheduler=scheduler,
+                    adaptive_weighter=adaptive_weighter,
+                    generator_states=generator_states,
+                )
             save_checkpoint(
                 run_directory / "last.pt",
                 model,
@@ -983,9 +1168,7 @@ def train_controlled_variant(
                     "validation_objective": validation_metrics.total,
                     "validation_fixed_objective": fixed_contributions["total"],
                     **(
-                        {"checkpoint_selection_state": selection_state.to_dict()}
-                        if is_v003
-                        else {}
+                        {"checkpoint_selection_state": selection_state.to_dict()} if is_v003 else {}
                     ),
                 },
                 config,
@@ -1008,7 +1191,7 @@ def train_controlled_variant(
         run_directory / "last.pt",
         model,
         optimizer,
-        epochs,
+        last_completed_epoch,
         {
             "validation_objective": float(last_validation),
             **(
@@ -1031,13 +1214,12 @@ def train_controlled_variant(
         if is_v003 and selection_state.best_epochs["whole_realization"] is not None
         else "best_sampling.pt"
     )
-    manifest["status"] = "complete"
+    manifest["status"] = "complete" if last_completed_epoch >= epochs else "paused_for_diagnostics"
+    manifest["last_completed_epoch"] = last_completed_epoch
     if is_v003:
         manifest["best_fixed_objective"] = selection_state.best_values["fixed_objective"]
         manifest["best_sample_criterion"] = selection_state.best_values["sampling"]
-        manifest["best_segmentation_miou"] = selection_state.best_values[
-            "segmentation"
-        ]
+        manifest["best_segmentation_miou"] = selection_state.best_values["segmentation"]
         manifest["best_whole_realization_criterion"] = selection_state.best_values[
             "whole_realization"
         ]

@@ -21,6 +21,20 @@ from .fluid_calibration import (
     constrained_local_gassmann_substitution,
     load_calibrated_dry_frame,
 )
+from .fluid_properties import (
+    FluidPropertyState,
+    batzle_wang_brine,
+    sample_fluid_scenario,
+    span_wagner_co2,
+)
+from .dry_frame import (
+    MatchedDryFrame,
+    constant_cement_power_law_bulk,
+    dry_poisson_ratio,
+    hashin_shtrikman_sand_frame,
+    hertz_mindlin_end_member,
+    match_hashin_shtrikman_family_to_shear,
+)
 from .synthetic import (
     Deformation,
     FieldConditionedRealization,
@@ -33,16 +47,28 @@ from .synthetic import (
     warp_with_deformation,
 )
 from .rock_physics import hertz_mindlin_gassmann
+from .support import (
+    CandidateSupportReport,
+    SupportAcceptanceContract,
+    calibration_support_threshold,
+    deterministic_candidate_seed,
+    evaluate_candidate_support,
+    support_contract_from_mapping,
+)
 
 __all__ = [
     "Deformation",
     "CalibratedDryFrameModel",
+    "CandidateSupportReport",
     "ElasticModelSet",
     "FieldConditionedRealization",
     "FluidScenario",
     "FluidRockPhysics",
+    "FluidPropertyState",
     "HorizonConditionedFields",
+    "MatchedDryFrame",
     "SyntheticGeology",
+    "SupportAcceptanceContract",
     "WheelerFields",
     "apply_co2_fluid_substitution",
     "blend_horizon_conditioned_background",
@@ -50,17 +76,29 @@ __all__ = [
     "build_reservoir_training_table",
     "build_well_training_table",
     "build_wheeler_fields",
+    "batzle_wang_brine",
     "calibrated_differential_gassmann_substitution",
+    "calibration_support_threshold",
     "constrained_local_gassmann_substitution",
+    "constant_cement_power_law_bulk",
     "delta_from_sand_probability",
+    "deterministic_candidate_seed",
     "fit_grouped_elastic_models",
+    "dry_poisson_ratio",
+    "hashin_shtrikman_sand_frame",
+    "hertz_mindlin_end_member",
     "hertz_mindlin_gassmann",
     "interval_mask",
     "load_calibrated_dry_frame",
     "make_deformation",
     "make_field_conditioned_realization",
     "make_synthetic_geology",
+    "match_hashin_shtrikman_family_to_shear",
     "predict_elastic_fields",
+    "evaluate_candidate_support",
     "sand_probability_from_delta",
+    "sample_fluid_scenario",
+    "span_wagner_co2",
+    "support_contract_from_mapping",
     "warp_with_deformation",
 ]

@@ -1,0 +1,66 @@
+schema_version: 1
+revision: "3.3.2b-graph-objective-selection"
+status: predeclared_before_candidate_training
+base_training_config: sage_avo_s01_v0031.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+stop_after_epoch: 5
+
+invariants:
+  model_architecture: unchanged_full_rgt_transformerconv
+  dataset_split: immutable_revision331_stage03
+  optimizer: unchanged_adamw
+  learning_rate_and_curriculum: unchanged
+  sampling_and_augmentation: unchanged
+  non_graph_losses: unchanged
+  checkpoint_rules: unchanged
+
+variants:
+  current_smoothness:
+    label: CURRENT_SMOOTHNESS
+    mode: current_smoothness
+    structure_coefficient: 0.50
+    source: completed_clean_epoch5_control
+  no_aux_graph_loss:
+    label: NO_AUX_GRAPH_LOSS
+    mode: no_aux_graph_loss
+    structure_coefficient: 0.0
+    graph_architecture_enabled: true
+  truth_edge_matching:
+    label: TRUTH_EDGE_MATCHING
+    mode: truth_edge_matching
+    structure_coefficient: 0.50
+    equation: mean_b mean_edges w_ij mean_channels abs((m_i-m_j)_pred-(m_i-m_j)_truth)
+    preserves_signed_vector_contrast: true
+  edge_aware_contrast:
+    label: EDGE_AWARE_CONTRAST
+    mode: edge_aware_contrast
+    structure_coefficient: 0.50
+    equation: 0.5*mean_same_layer(w_ij*mean_channels(abs(delta_m_pred))) + 0.5*mean_boundary(w_ij*mean_channels(abs(delta_m_pred-delta_m_truth)))
+    same_layer_definition:
+      lateral_only: true
+      maximum_rgt_mismatch_quantile: 0.25
+      minimum_input_edge_weight_quantile: 0.75
+      same_training_facies: true
+      maximum_truth_contrast_quantile: 0.25
+    boundary_definition:
+      facies_boundary_or_truth_contrast_quantile_at_least: 0.75
+    ambiguous_edges: excluded
+    population_reduction: equal_mean_of_nonempty_same_layer_and_boundary_terms
+
+truth_contract:
+  use: supervised optimizer_and_validation_diagnostics_only
+  model_input: false
+  field_inference_required: false
+  field_facies_required: false
+  validation_or_test_threshold_tuning: prohibited
+
+acceptance:
+  persistent_cosine_minimum: -0.30
+  must_not_worsen_whole_elastic_vs_no_aux: true
+  must_not_suppress_truth_edge_contrast: true
+  instability_prohibited: true
+  priority:
+    - whole_realization_elastic_and_exact_pp
+    - true_fault_and_structural_contrast
+    - gradient_cooperation

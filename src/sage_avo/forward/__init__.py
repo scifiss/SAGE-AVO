@@ -44,6 +44,8 @@ __all__ = [
     "forward_avo_three_band",
     "forward_avo_three_band_spec_torch",
     "forward_specification_from_mapping",
+    "exact_zoeppritz_pp_closed_form",
+    "exact_zoeppritz_pp_matrix",
     "apply_observation_perturbations",
     "madagascar_availability",
     "observation_config_from_mapping",
@@ -55,6 +57,10 @@ __all__ = [
 
 def __getattr__(name: str):
     """Load the optional differentiable operator only when it is requested."""
-    if name == "forward_avo_three_band_spec_torch":
+    if name in {
+        "exact_zoeppritz_pp_closed_form",
+        "exact_zoeppritz_pp_matrix",
+        "forward_avo_three_band_spec_torch",
+    }:
         return getattr(import_module(".torch_forward", __name__), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

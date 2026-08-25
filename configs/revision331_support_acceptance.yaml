@@ -1,0 +1,65 @@
+schema_version: 1
+revision: "3.3.1"
+status: predeclared_before_stress_evaluation
+
+# This contract is inherited unchanged from the accepted Revision-3.3
+# scenario/dry-frame gate.  A failed candidate is rejected in full; no pixel is
+# clipped, projected, masked, deleted, or repaired.
+enabled: true
+calibration_id: v0033_58a5fe39a11c4fe66431
+nearest_neighbor_training_quantile: 0.99
+physical_depth_domain_m: [2400.0, 3250.0]
+physical_porosity_domain_fraction: [0.01, 0.30]
+minimum_overall_coverage: 0.95
+minimum_class_coverage: 0.90
+facies_shaliness_boundary: 0.50
+depth_class_boundaries_m: [2850.0, 3100.0]
+dry_bulk_to_shear_range: [0.30, 4.00]
+dry_poisson_ratio_range: [0.00, 0.45]
+maximum_fixed_shear_error_gpa: 1.0e-5
+maximum_outside_plume_change: 0.0
+scenario_pressure_range_mpa: [24.0, 36.0]
+scenario_temperature_range_c: [55.0, 95.0]
+scenario_salinity_range_fraction: [0.006, 0.12]
+scenario_brie_exponent_range: [2.0, 4.0]
+
+maximum_attempts: 16
+retry_seed_namespace: sage_avo_revision331_support_retry_v1
+
+# These diversity criteria are also declared before the stress evaluation.
+# Width means p95-p05.  Ratios compare accepted candidates with unfiltered
+# first-attempt candidates generated from the same master seeds.
+stress_gate:
+  master_seed_start: 3400000
+  candidate_count: 100
+  minimum_initial_acceptance_rate: 0.75
+  minimum_final_acceptance_rate: 1.00
+  minimum_p05_p95_width_ratio: 0.60
+  maximum_absolute_standardized_median_shift: 0.50
+  required_metrics:
+    - plume_depth_median
+    - plume_depth_span
+    - fold_amplitude_total
+    - maximum_absolute_fault_throw
+    - plume_effective_porosity_median
+    - plume_shaliness_median
+    - plume_saturation_median
+
+bounded_gate:
+  final_realization_count: 12
+  realization_id_offset: 3311000
+  # Includes the two known depth-tail master seeds plus multivariate-support
+  # tails from the failed immutable corpus.
+  member_master_seeds:
+    - 3400046
+    - 3400055
+    - 3400097
+    - 3400009
+    - 3400057
+    - 3400010
+    - 3400041
+    - 3400000
+    - 3400027
+    - 3400061
+    - 3400084
+    - 3400099

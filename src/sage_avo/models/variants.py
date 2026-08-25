@@ -89,6 +89,14 @@ def sage_avo_model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
         "physics_taper_samples": taper_samples,
         "guidance_start_fraction": float(guidance["start_fraction"]),
         "guidance_interval_steps": int(guidance["interval_steps"]),
+        "residual_trust_region_scales": (
+            tuple(
+                float(value)
+                for value in training["residual_trust_region"]["normalized_scales"]
+            )
+            if bool(training.get("residual_trust_region", {}).get("enabled", False))
+            else None
+        ),
     }
 
 
@@ -130,6 +138,7 @@ def build_sage_avo_variant(
     physics_taper_samples: int = 5,
     guidance_start_fraction: float = 1.0 / 3.0,
     guidance_interval_steps: int = 3,
+    residual_trust_region_scales: tuple[float, float, float] | None = None,
 ) -> SAGEAVO:
     """Build a learned ablation with all shared hyperparameters held constant."""
     definition = variant_definition(name)
@@ -154,4 +163,5 @@ def build_sage_avo_variant(
         physics_taper_samples=physics_taper_samples,
         guidance_start_fraction=guidance_start_fraction,
         guidance_interval_steps=guidance_interval_steps,
+        residual_trust_region_scales=residual_trust_region_scales,
     )

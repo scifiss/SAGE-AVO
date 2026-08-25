@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import torch
 from torch import Tensor, nn
@@ -38,7 +38,17 @@ def masked_mse(prediction: Tensor, target: Tensor, mask: Tensor) -> Tensor:
     else:
         raise ValueError("mask must have one channel or match the prediction channels")
     expanded = expanded.to(device=prediction.device, dtype=prediction.dtype)
-    return ((prediction - target).square() * expanded).sum() / (expanded.sum() + 1e-8)
+    residual = prediction - target
+    # Select active entries before nonlinear reduction.  Besides expressing the
+    # intended masked objective directly, this prevents a large but finite inactive
+    # residual from overflowing during squaring and subsequently producing Inf * 0.
+    eligible = expanded != 0
+    if bool(eligible.any()):
+        numerator = (residual[eligible].square() * expanded[eligible]).sum()
+    else:
+        # Retain an autograd path for an entirely inactive optimizer/evaluation step.
+        numerator = residual[eligible].sum()
+    return numerator / (expanded.sum() + 1e-8)
 
 
 def weighted_elastic_mse(
@@ -242,6 +252,183 @@ def edge_smoothness(
     return total / max(batch, 1)
 
 
+@dataclass(frozen=True)
+class GraphObjectiveSettings:
+    """Frozen definition of the auxiliary graph objective.
+
+    The model never consumes these settings during forward inference. They are
+    used only by the supervised optimizer/evaluation objective.
+    """
+
+    mode: str = "current_smoothness"
+    same_layer_rgt_quantile: float = 0.25
+    same_layer_weight_quantile: float = 0.75
+    low_truth_contrast_quantile: float = 0.25
+    high_truth_contrast_quantile: float = 0.75
+
+    @classmethod
+    def from_mapping(cls, values: Mapping[str, object] | None) -> "GraphObjectiveSettings":
+        if values is None:
+            return cls()
+        settings = cls(
+            mode=str(values.get("mode", "current_smoothness")),
+            same_layer_rgt_quantile=float(values.get("same_layer_rgt_quantile", 0.25)),
+            same_layer_weight_quantile=float(values.get("same_layer_weight_quantile", 0.75)),
+            low_truth_contrast_quantile=float(values.get("low_truth_contrast_quantile", 0.25)),
+            high_truth_contrast_quantile=float(values.get("high_truth_contrast_quantile", 0.75)),
+        )
+        settings.validate()
+        return settings
+
+    def validate(self) -> None:
+        allowed = {
+            "current_smoothness",
+            "no_aux_graph_loss",
+            "truth_edge_matching",
+            "edge_aware_contrast",
+        }
+        if self.mode not in allowed:
+            raise ValueError(f"Unknown graph objective {self.mode!r}; expected {sorted(allowed)}")
+        quantiles = (
+            self.same_layer_rgt_quantile,
+            self.same_layer_weight_quantile,
+            self.low_truth_contrast_quantile,
+            self.high_truth_contrast_quantile,
+        )
+        if any(not 0.0 <= value <= 1.0 for value in quantiles):
+            raise ValueError("Graph-objective quantiles must lie in [0, 1]")
+        if self.low_truth_contrast_quantile >= self.high_truth_contrast_quantile:
+            raise ValueError("Low truth-contrast quantile must be below the high quantile")
+
+
+def _edge_differences(properties: Tensor, edge_index: Tensor) -> Tensor:
+    channels = properties.shape[0]
+    flattened = properties.reshape(channels, -1).transpose(0, 1)
+    source, destination = edge_index
+    return flattened[source] - flattened[destination]
+
+
+def truth_edge_matching(
+    full_properties: Tensor,
+    target_properties: Tensor,
+    edge_indices: list[Tensor],
+    edge_weights: list[Tensor],
+) -> Tensor:
+    """Match signed normalized elastic edge-difference vectors to synthetic truth."""
+    if not edge_indices:
+        return full_properties.new_zeros(())
+    total = full_properties.new_zeros(())
+    for item, edge_index in enumerate(edge_indices):
+        predicted_difference = _edge_differences(full_properties[item], edge_index)
+        target_difference = _edge_differences(target_properties[item], edge_index)
+        mismatch = (predicted_difference - target_difference).abs().mean(dim=1)
+        total = total + (mismatch * edge_weights[item]).mean()
+    return total / max(full_properties.shape[0], 1)
+
+
+def edge_aware_contrast(
+    full_properties: Tensor,
+    target_properties: Tensor,
+    rgt: Tensor,
+    segmentation: Tensor,
+    edge_indices: list[Tensor],
+    edge_weights: list[Tensor],
+    settings: GraphObjectiveSettings,
+) -> Tensor:
+    """Smooth only confident same-layer edges and preserve boundary contrasts.
+
+    Confident same-layer edges are lateral, in the lowest RGT-mismatch quartile,
+    in the highest input-derived edge-weight quartile, same-facies, and in the
+    lowest truth-contrast quartile. Boundary edges cross a facies label or lie in
+    the highest truth-contrast quartile. Other edges are deliberately excluded.
+    The two non-empty population means receive equal weight.
+    """
+    if not edge_indices:
+        return full_properties.new_zeros(())
+    if rgt.ndim == 4 and rgt.shape[1] == 1:
+        rgt = rgt[:, 0]
+    if segmentation.ndim == 4 and segmentation.shape[1] == 1:
+        segmentation = segmentation[:, 0]
+    total = full_properties.new_zeros(())
+    for item, edge_index in enumerate(edge_indices):
+        source, destination = edge_index
+        width = full_properties.shape[-1]
+        predicted_difference = _edge_differences(full_properties[item], edge_index)
+        target_difference = _edge_differences(target_properties[item], edge_index)
+        predicted_contrast = predicted_difference.abs().mean(dim=1)
+        target_contrast = target_difference.abs().mean(dim=1)
+        weights = edge_weights[item]
+        flattened_rgt = rgt[item].reshape(-1)
+        rgt_mismatch = (flattened_rgt[source] - flattened_rgt[destination]).abs()
+        labels = segmentation[item].reshape(-1)
+        facies_boundary = labels[source] != labels[destination]
+        lateral = source.remainder(width) != destination.remainder(width)
+        low_rgt_mismatch = rgt_mismatch <= torch.quantile(
+            rgt_mismatch, settings.same_layer_rgt_quantile
+        )
+        high_input_similarity = weights >= torch.quantile(
+            weights, settings.same_layer_weight_quantile
+        )
+        low_truth_contrast = target_contrast <= torch.quantile(
+            target_contrast, settings.low_truth_contrast_quantile
+        )
+        high_truth_contrast = target_contrast >= torch.quantile(
+            target_contrast, settings.high_truth_contrast_quantile
+        )
+        same_layer = (
+            lateral
+            & low_rgt_mismatch
+            & high_input_similarity
+            & ~facies_boundary
+            & low_truth_contrast
+        )
+        boundary = (facies_boundary | high_truth_contrast) & ~same_layer
+        terms: list[Tensor] = []
+        if bool(same_layer.any()):
+            terms.append((predicted_contrast[same_layer] * weights[same_layer]).mean())
+        if bool(boundary.any()):
+            mismatch = (predicted_difference - target_difference).abs().mean(dim=1)
+            terms.append((mismatch[boundary] * weights[boundary]).mean())
+        if terms:
+            total = total + torch.stack(terms).mean()
+        else:
+            total = total + predicted_difference.sum() * 0.0
+    return total / max(full_properties.shape[0], 1)
+
+
+def graph_structure_loss(
+    full_properties: Tensor,
+    target_properties: Tensor,
+    rgt: Tensor,
+    segmentation: Tensor,
+    edge_indices: list[Tensor],
+    edge_weights: list[Tensor],
+    settings: GraphObjectiveSettings = GraphObjectiveSettings(),
+) -> Tensor:
+    """Dispatch the predeclared controlled graph-objective condition."""
+    settings.validate()
+    if settings.mode == "current_smoothness":
+        return edge_smoothness(full_properties, edge_indices, edge_weights)
+    if settings.mode == "no_aux_graph_loss":
+        return full_properties.sum() * 0.0
+    if settings.mode == "truth_edge_matching":
+        return truth_edge_matching(
+            full_properties,
+            target_properties,
+            edge_indices,
+            edge_weights,
+        )
+    return edge_aware_contrast(
+        full_properties,
+        target_properties,
+        rgt,
+        segmentation,
+        edge_indices,
+        edge_weights,
+        settings,
+    )
+
+
 def physics_loss(
     normalized_prediction: Tensor,
     normalized_avo: Tensor,
@@ -263,6 +450,15 @@ def physics_loss(
 ) -> Tensor:
     """Compare observed and differentiably forward-modeled three-band AVO."""
     physical = normalized_prediction * y_std + y_mean
+    active_mask = mask
+    observed = normalized_avo
+    if mask is not None:
+        eligible = mask.reshape(mask.shape[0], -1).ne(0).any(dim=1)
+        if not bool(eligible.any()):
+            return normalized_prediction.sum() * 0.0
+        physical = physical[eligible]
+        observed = normalized_avo[eligible]
+        active_mask = mask[eligible]
     angles = torch.as_tensor(
         tuple(angles_degrees),
         device=physical.device,
@@ -283,9 +479,9 @@ def physics_loss(
         taper_samples=taper_samples,
     )
     normalized_modeled = (modeled - x_mean) / x_std
-    if mask is None:
-        return F.mse_loss(normalized_modeled, normalized_avo)
-    return masked_mse(normalized_modeled, normalized_avo, mask)
+    if active_mask is None:
+        return F.mse_loss(normalized_modeled, observed)
+    return masked_mse(normalized_modeled, observed, active_mask)
 
 
 def physics_loss_with_context(
@@ -303,29 +499,38 @@ def physics_loss_with_context(
     specification: ForwardModelSpecification,
 ) -> Tensor:
     """Forward native-grid predictions with truth context supplying the vertical halo."""
-    batch, _, core_height, core_width = normalized_prediction.shape
-    if normalized_context.ndim != 4 or normalized_context.shape[0] != batch:
+    original_batch, _, core_height, core_width = normalized_prediction.shape
+    if normalized_context.ndim != 4 or normalized_context.shape[0] != original_batch:
         raise ValueError("normalized_context must have shape [B,3,H+2*halo,W]")
     if normalized_context.shape[3] != core_width:
         raise ValueError("Physics context and prediction must share their trace grid")
-    context = normalized_context.clone()
+    eligible = mask.reshape(original_batch, -1).ne(0).any(dim=1)
+    if not bool(eligible.any()):
+        return normalized_prediction.sum() * 0.0
+    prediction = normalized_prediction[eligible]
+    context = normalized_context[eligible].clone()
+    observed = normalized_observed_avo[eligible]
+    active_mask = mask[eligible]
+    active_core_start = core_start[eligible]
+    active_sample_origin = sample_origin[eligible]
+    batch = prediction.shape[0]
     for item in range(batch):
-        start = int(core_start[item].item())
-        context[item, :, start : start + core_height] = normalized_prediction[item]
+        start = int(active_core_start[item].item())
+        context[item, :, start : start + core_height] = prediction[item]
     physical = context * y_std + y_mean
     modeled_context = forward_avo_three_band_spec_torch(
         physical[:, 0],
         physical[:, 1],
         physical[:, 2],
         specification,
-        sample_origin=sample_origin,
+        sample_origin=active_sample_origin,
     )
-    modeled = torch.empty_like(normalized_observed_avo)
+    modeled = torch.empty_like(observed)
     for item in range(batch):
-        start = int(core_start[item].item())
+        start = int(active_core_start[item].item())
         modeled[item] = modeled_context[item, :, start : start + core_height]
     normalized_modeled = (modeled - x_mean) / x_std
-    return masked_mse(normalized_modeled, normalized_observed_avo, mask)
+    return masked_mse(normalized_modeled, observed, active_mask)
 
 
 @dataclass(frozen=True)

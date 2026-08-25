@@ -417,6 +417,22 @@ def apply_co2_fluid_substitution_v003(
                 "elastic_output_clipping_used": False,
                 "direct_independent_elastic_delta_transfer": False,
                 "effective_porosity_method": "two_phase_mineral_brine_density_closure",
+                "effective_porosity_formula": (
+                    "phi_eff = (rho_mineral - rho_RF) / "
+                    "(rho_mineral - rho_brine)"
+                ),
+                "geological_porosity_role": (
+                    "preserved geological-model and ML-input coordinate; not replaced"
+                ),
+                "rock_physics_porosity_role": (
+                    "density-closure coordinate used only for dry-frame/fluid calculations"
+                ),
+                "rock_physics_porosity_uncertainty": (
+                    "depends on mineral mixture and the sampled scenario brine density"
+                ),
+                "geological_porosity_percentiles": np.quantile(
+                    result.input_porosity, [0.01, 0.5, 0.99]
+                ).tolist(),
                 "effective_porosity_percentiles": np.quantile(
                     result.effective_porosity, [0.01, 0.5, 0.99]
                 ).tolist(),
@@ -604,6 +620,7 @@ def make_field_conditioned_realization(
     geology_config: dict[str, object],
     fluid_config: dict[str, object],
     fluid_calibration: CalibratedDryFrameModel | None = None,
+    fluid_property_metadata: dict[str, object] | None = None,
     depth_m: np.ndarray | None = None,
 ) -> FieldConditionedRealization:
     """Generate one coherent member of the Stage-01-conditioned geological family."""
@@ -664,60 +681,78 @@ def make_field_conditioned_realization(
         heterogeneity_metadata["enabled"] = True
 
     fluid_mode = str(fluid_config.get("mode", "legacy_absolute_hm"))
-    fluid_function = (
-        apply_co2_fluid_substitution
-        if fluid_mode == "legacy_absolute_hm" and "mode" not in fluid_config
-        else apply_co2_fluid_substitution_v003
-    )
-    fluid = fluid_function(
-        brine,
-        porosity,
-        sand,
-        reservoir,
-        rng,
-        plume_count=tuple(fluid_config["plume_count"]),
-        lateral_radius_samples=tuple(fluid_config["plume_lateral_radius_samples"]),
-        vertical_radius_samples=tuple(fluid_config["plume_vertical_radius_samples"]),
-        minimum_sand_thickness_samples=int(fluid_config["minimum_sand_thickness_samples"]),
-        sand_threshold=float(geology_config["sand_facies_probability_threshold"]),
-        co2_saturation=tuple(fluid_config["co2_saturation"]),
-        **(
-            {
-                "mode": fluid_mode,
-                "fluid_calibration": fluid_calibration,
-                "depth_m": depth_m,
-                "saturation_correlation_sigma_samples": tuple(
-                    fluid_config["saturation_correlation_sigma_samples"]
+    fluid_enabled = bool(fluid_config.get("enabled", True))
+    if not fluid_enabled or fluid_mode == "disabled_core_elastic":
+        fluid = FluidScenario(
+            elastic=brine.astype(np.float32),
+            plume_mask=np.zeros(shape, dtype=np.uint8),
+            co2_saturation=np.zeros(shape, dtype=np.float32),
+            metadata={
+                "mode": "disabled_core_elastic",
+                "enabled": False,
+                "requested_plumes": 0,
+                "plume_pixels": 0,
+                "scientific_scope": (
+                    "field-conditioned facies and elastic variability; no CO2-specific target"
                 ),
-                "saturation_variation_fraction": float(
-                    fluid_config["saturation_variation_fraction"]
-                ),
-                "vp_bounds_m_s": tuple(fluid_config["vp_bounds_m_s"]),
-                "vs_bounds_m_s": tuple(fluid_config["vs_bounds_m_s"]),
-                "density_bounds_g_cc": tuple(fluid_config["density_bounds_g_cc"]),
-                "compatibility_margin": float(fluid_config["compatibility_margin"]),
-            }
-            if fluid_function is apply_co2_fluid_substitution_v003
-            else {}
-        ),
-        critical_porosity=float(fluid_config["critical_porosity"]),
-        coordination_factor=float(fluid_config["coordination_factor"]),
-        quartz_bulk_modulus_gpa=float(fluid_config["quartz_bulk_modulus_gpa"]),
-        clay_bulk_modulus_gpa=float(fluid_config["clay_bulk_modulus_gpa"]),
-        quartz_shear_modulus_gpa=float(fluid_config["quartz_shear_modulus_gpa"]),
-        clay_shear_modulus_gpa=float(fluid_config["clay_shear_modulus_gpa"]),
-        quartz_density_g_cc=float(fluid_config["quartz_density_g_cc"]),
-        clay_density_g_cc=float(fluid_config["clay_density_g_cc"]),
-        overburden_density_kg_m3=float(fluid_config["overburden_density_kg_m3"]),
-        gravity_m_s2=float(fluid_config["gravity_m_s2"]),
-        depth_origin_m=float(fluid_config["depth_origin_m"]),
-        depth_increment_m=float(fluid_config["depth_increment_m"]),
-        brine_bulk_modulus_gpa=float(fluid_config["brine_bulk_modulus_gpa"]),
-        co2_bulk_modulus_gpa=float(fluid_config["co2_bulk_modulus_gpa"]),
-        brine_density_g_cc=float(fluid_config["brine_density_g_cc"]),
-        co2_density_g_cc=float(fluid_config["co2_density_g_cc"]),
-        brie_exponent=float(fluid_config["brie_exponent"]),
-    )
+                "co2_class_present": False,
+            },
+        )
+    else:
+        fluid_function = (
+            apply_co2_fluid_substitution
+            if fluid_mode == "legacy_absolute_hm" and "mode" not in fluid_config
+            else apply_co2_fluid_substitution_v003
+        )
+        fluid = fluid_function(
+            brine,
+            porosity,
+            sand,
+            reservoir,
+            rng,
+            plume_count=tuple(fluid_config["plume_count"]),
+            lateral_radius_samples=tuple(fluid_config["plume_lateral_radius_samples"]),
+            vertical_radius_samples=tuple(fluid_config["plume_vertical_radius_samples"]),
+            minimum_sand_thickness_samples=int(fluid_config["minimum_sand_thickness_samples"]),
+            sand_threshold=float(geology_config["sand_facies_probability_threshold"]),
+            co2_saturation=tuple(fluid_config["co2_saturation"]),
+            **(
+                {
+                    "mode": fluid_mode,
+                    "fluid_calibration": fluid_calibration,
+                    "depth_m": depth_m,
+                    "saturation_correlation_sigma_samples": tuple(
+                        fluid_config["saturation_correlation_sigma_samples"]
+                    ),
+                    "saturation_variation_fraction": float(
+                        fluid_config["saturation_variation_fraction"]
+                    ),
+                    "vp_bounds_m_s": tuple(fluid_config["vp_bounds_m_s"]),
+                    "vs_bounds_m_s": tuple(fluid_config["vs_bounds_m_s"]),
+                    "density_bounds_g_cc": tuple(fluid_config["density_bounds_g_cc"]),
+                    "compatibility_margin": float(fluid_config["compatibility_margin"]),
+                }
+                if fluid_function is apply_co2_fluid_substitution_v003
+                else {}
+            ),
+            critical_porosity=float(fluid_config["critical_porosity"]),
+            coordination_factor=float(fluid_config["coordination_factor"]),
+            quartz_bulk_modulus_gpa=float(fluid_config["quartz_bulk_modulus_gpa"]),
+            clay_bulk_modulus_gpa=float(fluid_config["clay_bulk_modulus_gpa"]),
+            quartz_shear_modulus_gpa=float(fluid_config["quartz_shear_modulus_gpa"]),
+            clay_shear_modulus_gpa=float(fluid_config["clay_shear_modulus_gpa"]),
+            quartz_density_g_cc=float(fluid_config["quartz_density_g_cc"]),
+            clay_density_g_cc=float(fluid_config["clay_density_g_cc"]),
+            overburden_density_kg_m3=float(fluid_config["overburden_density_kg_m3"]),
+            gravity_m_s2=float(fluid_config["gravity_m_s2"]),
+            depth_origin_m=float(fluid_config["depth_origin_m"]),
+            depth_increment_m=float(fluid_config["depth_increment_m"]),
+            brine_bulk_modulus_gpa=float(fluid_config["brine_bulk_modulus_gpa"]),
+            co2_bulk_modulus_gpa=float(fluid_config["co2_bulk_modulus_gpa"]),
+            brine_density_g_cc=float(fluid_config["brine_density_g_cc"]),
+            co2_density_g_cc=float(fluid_config["co2_density_g_cc"]),
+            brie_exponent=float(fluid_config["brie_exponent"]),
+        )
     segmentation = ((sand >= float(geology_config["sand_facies_probability_threshold"])) & reservoir).astype(
         np.uint8
     )
@@ -740,7 +775,14 @@ def make_field_conditioned_realization(
             "seed": seed,
             "deformation": deformation.metadata,
             "elastic_heterogeneity": heterogeneity_metadata,
-            "fluid": fluid.metadata,
+            "fluid": {
+                **fluid.metadata,
+                **(
+                    {"property_state": fluid_property_metadata}
+                    if fluid_property_metadata is not None
+                    else {}
+                ),
+            },
         },
     )
 

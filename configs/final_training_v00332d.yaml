@@ -1,0 +1,63 @@
+schema_version: 1
+revision: "3.3.2d-final-stable-training"
+status: predeclared_before_final_gate
+base_training_config: sage_avo_s01_v0031.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+
+objective_contract:
+  graph_architecture: full_rgt_transformerconv_with_reinjection
+  auxiliary_graph_smoothness_coefficient: 0.0
+  graph_smoothness_role: diagnostic_only
+  replacement_graph_objective: none
+  optimized_terms:
+    - flow_vp
+    - flow_vs
+    - flow_density
+    - full_property
+    - ssim
+    - segmentation_cross_entropy
+    - segmentation_dice
+    - exact_pp_physics
+
+exact_pp_operator:
+  implementation: batched_complex_boundary_condition_matrix_solve
+  system_size: 4
+  solver: torch.linalg.solve
+  postcritical_branch: complex_vertical_slowness_real_reflected_pp_component
+  row_equilibration: exact_same_multiplier_applied_to_matrix_row_and_rhs
+  denominator_regularization: none
+  approximations: none
+  references:
+    - madagascar_sfzoeppritz2
+    - frozen_stage02_numpy_boundary_matrix
+
+failure_replay:
+  final_objective: no_aux_graph_loss
+  required_completed_batches: [235, 537, 690]
+  require_finite:
+    - total_loss
+    - physics_loss
+    - gradients
+    - model_parameters
+    - optimizer_state
+
+bounded_gate:
+  epochs: 5
+  diagnostic_epochs: [1, 5]
+  fresh_initialization: true
+  trust_region_fallback_allowed_only_after_operator_failure: true
+
+fallback_contract:
+  parameterization: m_normalized = m0_normalized + s_normalized * tanh(raw_velocity / s_normalized)
+  scale_source: maximum_absolute_truth_minus_2hz_prior_residual_on_training_realizations_only
+  safety_margin_fraction: 0.10
+  validation_or_test_statistics_used: false
+  direct_property_clipping: false
+
+production:
+  epochs: 120
+  mandatory_review_epoch: 100
+  full_checkpoint_interval_epochs: 5
+  diagnostics_interval_epochs: 5
+  resume_from_historical_control: false

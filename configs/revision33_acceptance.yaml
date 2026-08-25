@@ -1,0 +1,65 @@
+schema_version: 1
+revision: "3.3"
+declared_before_model_fitting: true
+
+scope:
+  bounded_realization_count: 8
+  full_production_permitted: false
+  ambiguous_wells_are_brine: false
+  candidate_b_algorithm_change_permitted: false
+
+support:
+  predictive_envelope_quantile: 0.99
+  minimum_overall_gate_coverage: 0.95
+  minimum_facies_depth_bin_coverage: 0.90
+  nearest_neighbor_training_quantile: 0.99
+  minimum_all_well_neighbor_coverage: 0.95
+  physical_family_depth_domain_m: [2400.0, 3250.0]
+  physical_family_porosity_domain_fraction: [0.01, 0.30]
+  prohibited_unbounded_extrapolation: true
+
+dry_shear_leave_one_well_out:
+  target: "log(mu_GPa)"
+  maximum_mean_absolute_percentage_error: 0.15
+  maximum_per_well_mean_absolute_percentage_error: 0.25
+  maximum_absolute_per_well_median_bias: 0.10
+  minimum_empirical_99_interval_coverage: 0.90
+
+dry_frame:
+  confirmed_t73_minimum_99_envelope_coverage: 0.95
+  ambiguous_well_minimum_latent_admissibility: 0.95
+  ambiguous_well_minimum_per_well_admissibility: 0.90
+  latent_ksat_tolerance:
+    relative_fraction: 0.15
+    minimum_gpa: 0.75
+  dry_bulk_gpa_strictly_positive: true
+  dry_bulk_below_mineral_bulk: true
+  dry_bulk_to_shear_range: [0.30, 4.00]
+  dry_poisson_ratio_range: [0.00, 0.45]
+  mineral_modulus_projection_permitted: false
+  dry_frame_clipping_permitted: false
+  elastic_output_clipping_permitted: false
+  arbitrary_delta_vp_cap_permitted: false
+
+candidate_b:
+  maximum_zero_saturation_recovery_error: 1.0e-9
+  maximum_outside_plume_change: 0.0
+  maximum_fixed_shear_error_gpa: 1.0e-5
+  minimum_predictive_envelope_coverage: 0.95
+  minimum_facies_depth_bin_envelope_coverage: 0.90
+  smooth_saturation_required: true
+  density_monotonic_decrease_required: true
+
+core_elastic_route:
+  minimum_regional_leave_one_well_out_r2: 0.75
+  minimum_reservoir_leave_one_well_out_r2: 0.40
+  maximum_reservoir_relative_rmse: 0.08
+  minimum_stage01_spatial_support_fraction: 0.80
+  bounded_elastic_states_must_be_finite_and_physical: true
+  co2_fluid_substitution_enabled: false
+  plume_class_permitted: false
+
+route_decision:
+  scenario_co2: "All support, dry-frame, latent-fluid, Candidate-B, bounded execution, repository, notebook, and CUDA gates pass."
+  core_elastic: "The core-elastic criteria and all bounded execution, repository, notebook, and CUDA gates pass, while any scenario-CO2 criterion fails."
+  no_go: "Neither route satisfies its predeclared scientific and execution gates."

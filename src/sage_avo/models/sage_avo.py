@@ -186,6 +186,7 @@ class SAGEAVO(nn.Module):
         physics_taper_samples: int = 5,
         guidance_start_fraction: float = 1.0 / 3.0,
         guidance_interval_steps: int = 3,
+        residual_trust_region_scales: Sequence[float] | None = None,
     ) -> None:
         super().__init__()
         if graph_mode not in {"rgt", "cartesian", "none"}:
@@ -211,6 +212,26 @@ class SAGEAVO(nn.Module):
         self.physics_taper_samples = int(physics_taper_samples)
         self.guidance_start_fraction = float(guidance_start_fraction)
         self.guidance_interval_steps = int(guidance_interval_steps)
+        if residual_trust_region_scales is None:
+            trust_scales = torch.ones(1, 3, 1, 1)
+            trust_region_enabled = False
+        else:
+            trust_scales = torch.as_tensor(
+                residual_trust_region_scales, dtype=torch.float32
+            ).reshape(1, 3, 1, 1)
+            if torch.any(~torch.isfinite(trust_scales)) or torch.any(trust_scales <= 0):
+                raise ValueError("Residual trust-region scales must be finite and positive")
+            trust_region_enabled = True
+        self.register_buffer(
+            "residual_trust_region_scales",
+            trust_scales,
+            persistent=False,
+        )
+        self.register_buffer(
+            "residual_trust_region_enabled",
+            torch.tensor(trust_region_enabled),
+            persistent=False,
+        )
         hidden = hidden_channels
         self.time_embedding = nn.Sequential(nn.Linear(1, hidden), nn.ReLU())
         self.condition_embedding = nn.Conv2d(6, hidden, 1)
@@ -287,7 +308,7 @@ class SAGEAVO(nn.Module):
             weights: list[Tensor] = []
             attention_edges: list[Tensor] = []
             attention_weights: list[Tensor] = []
-            velocity = self.decoder(cnn)
+            velocity = self._parameterize_velocity(self.decoder(cnn))
         else:
             tokens = cnn.flatten(2).transpose(1, 2)
             (
@@ -299,7 +320,7 @@ class SAGEAVO(nn.Module):
                 attention_weights,
             ) = self.graph(tokens, avo, rgt)
             graph_spatial = embeddings.reshape(batch, height, width, -1).permute(0, 3, 1, 2)
-            velocity = self.decoder(cnn + graph_spatial)
+            velocity = self._parameterize_velocity(self.decoder(cnn + graph_spatial))
         return ModelOutput(
             velocity,
             segmentation,
@@ -309,6 +330,15 @@ class SAGEAVO(nn.Module):
             attention_edges,
             attention_weights,
         )
+
+    def _parameterize_velocity(self, raw_velocity: Tensor) -> Tensor:
+        """Apply the optional training-derived smooth residual trust region."""
+        if not bool(self.residual_trust_region_enabled.item()):
+            return raw_velocity
+        scales = self.residual_trust_region_scales.to(
+            device=raw_velocity.device, dtype=raw_velocity.dtype
+        )
+        return scales * torch.tanh(raw_velocity / scales)
 
     def _physics_guided_correction(
         self,
