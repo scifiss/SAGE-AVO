@@ -66,14 +66,16 @@ def status(_: argparse.Namespace) -> None:
     print(json.dumps(result, indent=2))
 
 
-def prepare(_: argparse.Namespace) -> None:
+def prepare(args: argparse.Namespace) -> None:
     contract, config, dataset, experiment = resolve()
     if not (dataset / "dataset_manifest.json").exists():
         raise FileNotFoundError(f"Immutable dataset is unavailable: {dataset}")
     experiment.mkdir(parents=True, exist_ok=True)
     destination = experiment / "matched_training_contract.json"
-    if destination.exists():
+    if destination.exists() and not args.refresh:
         raise FileExistsError(f"Refusing to overwrite existing contract: {destination}")
+    if args.refresh and any((experiment / "runs" / variant).exists() for variant in LEARNED_VARIANTS):
+        raise RuntimeError("Refusing to refresh a contract after any matched run has started")
     payload = {
         "status": "PREPARED_NOT_TRAINED",
         "contract": contract,
@@ -92,6 +94,11 @@ def train(args: argparse.Namespace) -> None:
     prepared = experiment / "matched_training_contract.json"
     if not prepared.exists():
         raise FileNotFoundError("Run the prepare command before training")
+    prepared_payload = json.loads(prepared.read_text(encoding="utf-8"))
+    if prepared_payload.get("contract_sha256") != canonical_hash(contract):
+        raise RuntimeError("Prepared contract hash is stale; review and run prepare --refresh")
+    if prepared_payload.get("resolved_config_sha256") != canonical_hash(config):
+        raise RuntimeError("Prepared resolved-config hash is stale; review and run prepare --refresh")
     run = experiment / "runs" / args.variant
     if run.exists():
         raise FileExistsError(f"Refusing to overwrite matched run: {run}")
@@ -115,7 +122,13 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest="command", required=True)
     commands.add_parser("status").set_defaults(function=status)
-    commands.add_parser("prepare").set_defaults(function=prepare)
+    preparation = commands.add_parser("prepare")
+    preparation.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Replace a stale prepared contract only when no matched run has started",
+    )
+    preparation.set_defaults(function=prepare)
     training = commands.add_parser("train")
     training.add_argument("--variant", choices=LEARNED_VARIANTS, required=True)
     training.add_argument("--device", required=True, help="Explicit device such as cuda:0")
