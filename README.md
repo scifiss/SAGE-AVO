@@ -13,11 +13,9 @@ residual transport, and differentiable seismic-consistency constraints.
 
 ## Release scope
 
-## Release scope
+Version 0.1 provides the five-stage research implementation and orchestration: field structure and elastic-background construction, field-conditioned geological realization generation, exact-physics AVO synthesis, leakage-safe ML dataset construction, controlled SAGE-AVO training, and evaluation/field-deployment orchestration. Proprietary field inputs, trained checkpoints, generated field artifacts, and controlled benchmark outputs are not distributed in this public release. Field inference code is a deployment/QC framework; this release does not claim independent field validation or publish final field-performance results.
 
-Version 0.1 provides the five-stage research implementation and orchestration: field structure and elastic-background construction, field-conditioned geological realization generation, exact-physics AVO synthesis, leakage-safe ML dataset construction, controlled SAGE-AVO training, and evaluation/field-deployment orchestration. SAGE-AVO has also been applied to whole-section field data, with the resulting elastic-property sections assessed through structural continuity, nearby-well consistency, and forward-modeled AVA agreement. Proprietary field inputs, trained checkpoints, generated field artifacts, and controlled benchmark outputs are not distributed in this public release.
-
-The bounded validation suite passes for the shared forward operator, leakage-safe dataset construction, checkpointing, notebook execution, and CUDA training. The fluid-substitution module remains preproduction: full-corpus generation requires a reviewed pressure, temperature, salinity, equation-of-state, and fluid-mixing validation manifest. Field inference additionally requires a passing amplitude, polarity, phase, wavelet, per-band scaling, distribution-overlap, and low-frequency-prior calibration manifest. This release does not report final production or field-performance results.
+The bounded validation suite passes for the shared forward operator, leakage-safe dataset construction, checkpointing, notebook execution, and CUDA training. The final synthetic lineage uses the approved v00331 support-aware dry-frame/fluid provenance contract; compatibility fluid modes remain excluded from production claims. Field inference additionally requires a passing amplitude, polarity, phase, wavelet, per-band scaling, distribution-overlap, and low-frequency-prior calibration manifest.
 
 ### Stage 01 structure-model contract
 
@@ -77,11 +75,13 @@ near/mid/far AVO ────────┘               │
       └─ P / G / curvature ─ RGT graph ──┤
 RGT ───────────────────── TransformerConv └─ facies/CO₂ segmentation
 
-loss = flow + full-property + segmentation + Zoeppritz consistency + graph smoothness
+loss = flow + full-property + SSIM + segmentation + exact-Zoeppritz consistency
 ```
 
 “Transformer” refers specifically to TransformerConv graph attention in the RGT
-graph branch.
+graph branch. The graph architecture remains active, but the former auxiliary
+graph-smoothness loss is scientifically retired and has zero coefficient in the
+final v00332d objective.
 
 ## Controlled benchmark design
 

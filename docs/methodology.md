@@ -119,8 +119,14 @@ The multitask objective combines:
 - masked flow-velocity MSE;
 - masked full-property MSE;
 - class-weighted cross-entropy and multiclass Dice;
-- differentiable exact-Zoeppritz AVO consistency;
-- edge-weighted structural smoothness.
+- differentiable exact-Zoeppritz AVO consistency.
+
+The RGT-steered graph architecture and graph-to-image reinjection remain active.
+The former edge-weighted auxiliary graph-smoothness loss is not part of the
+final v00332d objective: it was scientifically misaligned with valid elastic
+contrasts and its coefficient is fixed at zero. Masked SSIM acts on the
+teacher-forced proxy endpoint `x_low + velocity`, not on flow velocity or the
+Heun-integrated whole-realization endpoint.
 
 Sampling metrics and flow loss are checkpointed separately because lower flow
 loss does not guarantee a better integrated inversion. The versioned training

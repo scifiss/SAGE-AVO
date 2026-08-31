@@ -6,8 +6,10 @@ How much information does SAGE-AVO add beyond a supplied low-frequency elastic
 prior, and what are the incremental contributions of graph propagation, RGT
 steering, and differentiable AVO consistency?
 
-The production contract is `configs/sage_avo_s01_v003.yaml`; Notebooks 02–05 expose
-the complete data-generation, dataset, training, and evaluation sequence.
+The final lineage is Stage-02 `v00331_production100_support_aware`, immutable
+Stage-03 `ds_v00331_production100_support_aware`, and the v00332d training
+contract in `configs/final_training_v00332d.yaml` resolved over
+`configs/sage_avo_s01_v0031.yaml`. Notebooks 02–05 expose this final lineage.
 
 ## Matched conditions
 
@@ -52,8 +54,10 @@ the same tiling, Hann blending, integration steps, masks, and metrics.
 
 ## Training and evaluation
 
-Notebook 04 exposes the training contract; the versioned production interface is
-`scripts/run_revision3_production.py train --variant ...`. Each run writes its seed, split IDs,
+Notebook 04 exposes the final training contract. The completed full-model
+production interface is `scripts/run_revision332d_final_training.py`; future
+matched component-removal runs must use a predeclared common harness over the
+same immutable v00331 dataset. Each run writes its seed, split IDs,
 normalization, prior definition, config hash, optimizer schedule, and separate
 fixed-objective, sampling, segmentation, whole-realization, periodic, and last
 checkpoints.
@@ -64,6 +68,11 @@ MAE, R², SSIM, mIoU, macro Dice/F1, and class IoU per realization before
 aggregation. Paired bootstrap intervals compare the full model with each
 control. Positive paired improvement is defined to mean that the full model is
 better.
+
+At present only the full v00332d checkpoint is final. Matched final no-GNN,
+Cartesian/no-RGT, no-physics, and faithful-HCTNet checkpoints are still missing;
+bounded gates, v002 results, sanity runs, and historical HCTNet values are not
+paper-quality controlled evidence.
 
 The representative test realization is the ID whose full-model Vp RMSE is
 closest to the test-set median. The rule and ID are saved before figure

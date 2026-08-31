@@ -112,10 +112,30 @@ if validation_root_text:
     realization_dir = validation_root / "stage02" / "realizations"
     figure_dir = validation_root / "figures" / "stage02"
 else:
-    workflow = load_config(ROOT / "configs" / "synthetic_s01_v003.yaml")
-    private_root = Path(paths["private_artifact_root"])
+    workflow = load_config(ROOT / "configs" / "synthetic_s01_v0032.yaml")
+    support_contract = load_config(ROOT / "configs" / "revision331_support_acceptance.yaml")
+    workflow["stage"].update({
+        "name": "field_conditioned_synthetic_avo_v00331_support_aware",
+        "geology_realization_count": 100,
+        "observation_variants_per_geology": 1,
+        "realization_count": 100,
+        "realization_id_offset": 3_400_000,
+        "member_master_seeds": list(range(3_400_000, 3_400_100)),
+    })
+    workflow["fluid_substitution"].update({
+        "enabled": True,
+        "mode": "calibrated_differential_gassmann",
+        "calibration_id": "v0033_58a5fe39a11c4fe66431",
+        "calibration_artifact": "derived/fluid_models_v0033/calibrated_dry_frame_scenario_ensemble.npz",
+        "fluid_property_validation_artifact": "derived/fluid_models_v0033/fluid_property_validation.json",
+    })
+    workflow["support_aware_acceptance"] = support_contract
+    workflow["outputs"].update({
+        "version": "v00331_production100_support_aware",
+        "directory": "synthetic/v00331_production100_support_aware/realizations",
+    })
     realization_dir = private_root / "stage_artifacts" / "stage02" / workflow["outputs"]["version"] / "realizations"
-    figure_dir = private_root / "figures" / "revision3" / "stage02"
+    figure_dir = private_root / "figures" / "revision331" / "stage02_production"
 seed_everything(int(workflow["stage"]["seed"]))
 figure_dir.mkdir(parents=True, exist_ok=True)
 """
@@ -445,7 +465,7 @@ if validation_root_text:
     dataset_dir = validation_root / "stage03" / "dataset"
     figure_dir = validation_root / "figures" / "stage03"
 else:
-    workflow = load_config(ROOT / "configs" / "ml_dataset_s01_v003.yaml")
+    workflow = load_config(ROOT / "configs" / "ml_dataset_s01_v00331.yaml")
     private_root = Path(paths["private_artifact_root"])
     stage02_dir = private_root / "stage_artifacts" / "stage02" / workflow["inputs"]["synthetic_version"] / "realizations"
     dataset_dir = private_root / "stage_artifacts" / "stage03" / workflow["outputs"]["version"] / "dataset"
@@ -688,10 +708,9 @@ from sage_avo.experiments.training import (
     curriculum_from_config,
     loss_weights_from_config,
     physics_settings_from_config,
-    train_controlled_variant,
 )
 
-workflow_path = ROOT / "configs" / "sage_avo_s01_v003.yaml"
+workflow_path = ROOT / "configs" / "final_training_v00332d.yaml"
 paths_file = ROOT / "configs" / "paths.yaml"
 if not paths_file.exists():
     raise FileNotFoundError("Missing local configuration: configs/paths.yaml (template: configs/paths.example.yaml).")
@@ -706,10 +725,18 @@ if validation_root_text:
     experiment_dir = validation_root / "stage04" / "sage_avo_s01_v003_stage01v003_validation8"
     figure_dir = validation_root / "figures" / "stage04"
 else:
-    workflow = load_config(workflow_path)
-    dataset_dir = private_root / "stage_artifacts" / "stage03" / "ds_v003_production100_diverse" / "dataset"
-    experiment_dir = private_root / "stage_artifacts" / "stage04" / "sage_avo_s01_v003_production"
-    figure_dir = private_root / "figures" / "revision3" / "stage04"
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from run_revision332d_final_training import _configuration as resolve_final_training
+
+    workflow, observability = resolve_final_training()
+    final_contract = load_config(workflow_path)
+    if final_contract["immutable_dataset"] != "ds_v00331_production100_support_aware":
+        raise RuntimeError("Final training contract does not select the immutable v00331 dataset")
+    dataset_dir = private_root / "stage_artifacts" / "stage03" / final_contract["immutable_dataset"] / "dataset"
+    experiment_dir = private_root / "stage_artifacts" / "stage04" / "sage_avo_s01_v00332d_final_production"
+    figure_dir = private_root / "figures" / "revision332d" / "stage04"
 seed_everything(int(workflow["experiment"]["seed"]))
 figure_dir.mkdir(parents=True, exist_ok=True)
 """
@@ -831,11 +858,11 @@ print("state and velocity:", tuple(state.shape), tuple(target_velocity.shape))
             ## 5. Complete training objective
 
             \[
-            L = w_{inv}(0.65L_{flow}+0.20L_{property}+w_{ssim}L_{SSIM})
-                +0.30L_{seg}+w_cL_{contrastive}+w_{phys}L_{Zoeppritz}+w_gL_{graph}.
+            L = 0.65L_{flow}+0.20L_{property}+w_{ssim}L_{SSIM}
+                +0.30L_{seg}+w_{phys}L_{Zoeppritz}.
             \]
 
-            `L_flow` fits residual velocity and uses a density weight increasing from 2.0 to 3.5. `L_property` supervises the reconstructed endpoint `x_low + velocity`. Masked SSIM decreases from 0.15 to 0.05. Segmentation combines masked class-weighted cross-entropy and masked Dice. `L_Zoeppritz` compares the native central crop with stored **clean** Stage-02 bands while using truth elastic halo, global sample origin, and the identical hashed exact-PP/wavelet/mute contract. Complex post-critical slowness follows the Stage-02 convention. Multiscale patches retain supervised losses but receive zero exact-physics mask. `L_graph` penalizes elastic contrast along high-weight edges. Physics and structural weights decay to 70% and 75% of their initial values. Contrastive and adaptive task weighting are implemented capabilities but are disabled in the v003 configuration.
+            `L_flow` fits residual velocity and uses a density weight increasing from 2.0 to 3.5. `L_property` and masked SSIM supervise the teacher-forced proxy endpoint `x_low + velocity`; this proxy is distinct from the Heun-integrated endpoint used for whole-realization inference. SSIM decreases from 0.15 to 0.05. Segmentation combines masked class-weighted cross-entropy and masked Dice. `L_Zoeppritz` compares the native central crop with stored **clean** Stage-02 bands while using truth elastic halo, global sample origin, and the identical hashed exact-PP/wavelet/mute contract. Complex post-critical slowness follows the Stage-02 convention. Multiscale patches retain supervised losses but receive zero exact-physics mask. The RGT graph architecture and graph reinjection remain active, but the former auxiliary graph-smoothness objective is scientifically retired: v00332d fixes its coefficient to zero and uses `no_aux_graph_loss`. Physics decays to 70% of its initial weight. Legacy self-instance contrastive loss and adaptive task weighting are implemented capabilities but disabled.
 
             Stage 02 and Stage 04 use the same declared shared-endpoint bands (`3–17`, `17–31`, `31–45`). The overlap at 17° and 31° is intentional. Compact P/G representative angles are the corresponding band midpoints (`10°`, `24°`, `38°`).
             """
@@ -899,24 +926,13 @@ assert all(np.isfinite(value) for value in operator_metrics.__dict__.values())
 
             Training uses replacement sampling weighted by reservoir-facies fraction, RGT-gradient complexity, and absolute AVO gradient. Registered augmentation applies horizontal geological flips, mild normalized AVO gain, and mild normalized noise. Validation uses no augmentation and the deterministic interior-time grid `[0.2, 0.5, 0.8]`.
 
-            Production training is disabled by default to prevent accidental GPU-scale execution. Setting `SAGE_AVO_RUN_PRODUCTION_TRAINING=1` activates the configured run after its required manifests pass validation. Every epoch logs raw loss components, current weighted terms, and the fixed-final-weight objective. Deterministic sampled metrics are separate. At configured intervals, fixed complete validation realizations are tiled and scored without test data. The run writes `best_fixed_objective.pt`, `best_sampling.pt`, `best_segmentation.pt`, `best_whole_realization.pt`, periodic checkpoints, and `last.pt`; every file records its criterion formula and resume state.
+            The final v00332d production run completed the mandatory epoch-100 review. Whole-realization validation selected epoch 40; epochs 101–120 are not scientifically justified and this notebook does not resume training. Every completed epoch logged raw loss components, current weighted terms, and the fixed-final-weight objective. Deterministic sampled metrics are separate. At configured intervals, fixed complete validation realizations were tiled and scored without test data. The run writes `best_fixed_objective.pt`, `best_sampling.pt`, `best_segmentation.pt`, `best_whole_realization.pt`, periodic checkpoints, and `last.pt`; every file records its criterion formula and resume state.
             """
         ),
         code(
             """
-run_production_training = os.getenv("SAGE_AVO_RUN_PRODUCTION_TRAINING", "0") == "1"
-if run_production_training:
-    run_directory = train_controlled_variant(
-        repository=ROOT,
-        config_path=workflow_path,
-        config=workflow,
-        dataset_directory=dataset_dir,
-        experiment_directory=experiment_dir,
-        variant="full",
-    )
-else:
-    print("Production training is disabled (SAGE_AVO_RUN_PRODUCTION_TRAINING=0).")
-    print("Set SAGE_AVO_RUN_PRODUCTION_TRAINING=1 to activate the configured full-model run.")
+print("Read-only final-method notebook: training/resume is intentionally disabled.")
+print("Selected production checkpoint: epoch 40 best whole-realization.")
 
 run_dir = experiment_dir / "runs" / (
     "full_2epoch_cuda_sanity" if validation_root_text else "full"
@@ -1016,7 +1032,7 @@ from sage_avo.models import LEARNED_VARIANTS
 from sage_avo.visualization import plot_inversion_comparison
 from sage_avo.visualization.publication import graph_mechanism_figure
 
-workflow_path = ROOT / "configs" / "sage_avo_s01_v003.yaml"
+workflow_path = ROOT / "configs" / "final_training_v00332d.yaml"
 paths_file = ROOT / "configs" / "paths.yaml"
 if not paths_file.exists():
     raise FileNotFoundError("Missing local configuration: configs/paths.yaml (template: configs/paths.example.yaml).")
@@ -1031,10 +1047,16 @@ if validation_root_text:
     experiment_dir = validation_root / "stage04" / "sage_avo_s01_v003_stage01v003_validation8"
     figure_dir = validation_root / "figures" / "stage05"
 else:
-    workflow = load_config(workflow_path)
-    dataset_dir = private_root / "stage_artifacts" / "stage03" / "ds_v003_production100_diverse" / "dataset"
-    experiment_dir = private_root / "stage_artifacts" / "stage04" / "sage_avo_s01_v003_production"
-    figure_dir = private_root / "figures" / "revision3" / "stage05"
+    import sys
+
+    sys.path.insert(0, str(ROOT / "scripts"))
+    from run_revision332d_final_training import _configuration as resolve_final_training
+
+    workflow, observability = resolve_final_training()
+    final_contract = load_config(workflow_path)
+    dataset_dir = private_root / "stage_artifacts" / "stage03" / final_contract["immutable_dataset"] / "dataset"
+    experiment_dir = private_root / "stage_artifacts" / "stage04" / "sage_avo_s01_v00332d_final_production"
+    figure_dir = private_root / "figures" / "revision332d" / "stage05"
 seed_everything(int(workflow["experiment"]["seed"]))
 figure_dir.mkdir(parents=True, exist_ok=True)
 """
@@ -1056,6 +1078,7 @@ checkpoints = {
     variant: experiment_dir / "runs" / variant / "best_whole_realization.pt"
     for variant in LEARNED_VARIANTS
 }
+checkpoints["full"] = experiment_dir / "runs" / "full" / "best_whole_realization.pt"
 if validation_root_text:
     checkpoints["full"] = (
         experiment_dir

@@ -21,3 +21,13 @@ The bounded v003 run is an implementation and operator validation only; it is
 not a performance benchmark. Production eligibility is determined by the
 machine-readable physical, operator, dataset, and execution criteria encoded in
 the corresponding manifests.
+
+## Later final lineage
+
+This document records the historical Revision-3 correction stage. The later
+final lineage is support-aware Stage-02 v00331, immutable Stage-03
+`ds_v00331_production100_support_aware`, and v00332d training with the corrected
+exact complex matrix Zoeppritz operator. The RGT/TransformerConv architecture
+remains active, while auxiliary graph smoothness is diagnostic-only with zero
+optimization coefficient. Final matched no-GNN, Cartesian/no-RGT, no-physics,
+and faithful-HCTNet comparisons remain outstanding.
