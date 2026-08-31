@@ -76,3 +76,17 @@ def test_smoke_dataset_and_controlled_evaluator(tmp_path):
         "variant == 'full' and domain == 'vp' and metric == 'rmse'"
     )["value"].iloc[0]
     assert np.isclose(full_vp_rmse, 4.0)
+
+    baseline_summary, baseline_per_realization, baseline_paired, baseline_representative = (
+        evaluate_controlled_ablation(
+            experiment_directory=experiment,
+            dataset_directory=dataset,
+            bootstrap_repetitions=50,
+            seed=3,
+            variants=("low_prior", "full"),
+        )
+    )
+    assert set(baseline_summary["variant"]) == {"low_prior", "full"}
+    assert set(baseline_per_realization["variant"]) == {"low_prior", "full"}
+    assert set(baseline_paired["full_vs"]) == {"low_prior"}
+    assert baseline_representative == split_ids[0]

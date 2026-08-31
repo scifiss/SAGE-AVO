@@ -74,6 +74,57 @@ Cartesian/no-RGT, no-physics, and faithful-HCTNet checkpoints are still missing;
 bounded gates, v002 results, sanity runs, and historical HCTNet values are not
 paper-quality controlled evidence.
 
+## Runnable epoch-40 baseline
+
+The public driver can inspect prerequisites, generate deterministic predictions
+for the supplied low-frequency prior and validation-selected epoch-40 full
+checkpoint, and evaluate those two conditions:
+
+```bash
+PYTHONPATH=src python scripts/run_final_baseline.py status
+PYTHONPATH=src python scripts/run_final_baseline.py predict --device cuda:0
+PYTHONPATH=src python scripts/run_final_baseline.py evaluate
+```
+
+The defaults resolve private data/checkpoint locations through
+`configs/paths.yaml`; `--dataset`, `--checkpoint`, and `--output` provide
+explicit overrides. This is a baseline comparison, not evidence for the graph,
+RGT, or physics ablations.
+
+Before running model cells, install and select the WSL conda kernel explicitly:
+
+```bash
+conda run -n sage-avo python -m ipykernel install --user \
+  --name sage-avo --display-name "Python (sage-avo CUDA)"
+```
+
+In Jupyter choose **Python (sage-avo CUDA)**. Notebooks 04 and 05 print
+`sys.executable`, the PyTorch/CUDA build, CUDA availability, GPU name, and the
+selected device before model work. They refuse to silently run production model
+work on CPU. NumPy preprocessing, file I/O, and optional Madagascar operations
+remain on CPU.
+
+The 4-GB matched-control contract uses batch size 2. Mixed precision remains
+disabled until the differentiable exact-PP operator and graph scatter/attention
+path pass a dedicated FP16/BF16 numerical-equivalence and finite-gradient gate;
+silently changing precision would invalidate the matched scientific contract.
+
+## Predeclared matched controls
+
+`configs/matched_training_v00332e.yaml` freezes the shared training contract and
+the only allowed differences among `full`, `no_gnn`, `no_rgt`, and
+`no_physics`. Preparation records the contract but never starts training:
+
+```bash
+PYTHONPATH=src python scripts/run_matched_training_v00332e.py status
+PYTHONPATH=src python scripts/run_matched_training_v00332e.py prepare
+PYTHONPATH=src python scripts/run_matched_training_v00332e.py train --variant no_gnn --device cuda:0
+```
+
+Each training command requires an explicit variant and device and refuses to
+overwrite an existing run. The optional experimental objectives remain off so
+these runs isolate the advertised architecture/physics components.
+
 The representative test realization is the ID whose full-model Vp RMSE is
 closest to the test-set median. The rule and ID are saved before figure
 generation.

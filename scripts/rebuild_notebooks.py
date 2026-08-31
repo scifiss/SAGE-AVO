@@ -6,6 +6,7 @@ scientific runtime; every code cell calls the installed ``sage_avo`` package.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 import textwrap
 
@@ -25,6 +26,9 @@ def code(source: str):
 
 
 def write(name: str, cells: list) -> None:
+    for index, cell in enumerate(cells):
+        identity = f"{name}\0{index}\0{cell.cell_type}\0{cell.source}".encode()
+        cell["id"] = hashlib.sha256(identity).hexdigest()[:16]
     notebook = nbf.v4.new_notebook(
         cells=cells,
         metadata={
@@ -702,6 +706,7 @@ from sage_avo.config import load_config, seed_everything
 from sage_avo.data import IndexedRealizationPatches
 from sage_avo.models import build_sage_avo_variant, sage_avo_model_kwargs
 from sage_avo.models.sage_avo import angular_features
+from sage_avo.runtime import print_torch_runtime, select_torch_device
 from sage_avo.training.engine import PhysicsNormalization, train_step
 from sage_avo.training.flow import straight_path
 from sage_avo.experiments.training import (
@@ -738,6 +743,8 @@ else:
     experiment_dir = private_root / "stage_artifacts" / "stage04" / "sage_avo_s01_v00332d_final_production"
     figure_dir = private_root / "figures" / "revision332d" / "stage04"
 seed_everything(int(workflow["experiment"]["seed"]))
+print_torch_runtime()
+device = select_torch_device(require_cuda=True, context="Notebook 04 model execution")
 figure_dir.mkdir(parents=True, exist_ok=True)
 """
         ),
@@ -811,7 +818,7 @@ plt.show()
         code(
             """
 model_config = workflow["model"]
-full = build_sage_avo_variant("full", **sage_avo_model_kwargs(workflow)).eval()
+full = build_sage_avo_variant("full", **sage_avo_model_kwargs(workflow)).to(device).eval()
 full.set_norm_stats(normalization)
 display(pd.Series({
     "graph_mode": full.graph_mode,
@@ -820,8 +827,14 @@ display(pd.Series({
     "graph_heads": model_config["graph_heads"],
 }).to_frame("value"))
 with torch.no_grad():
-    state = sample["low"].unsqueeze(0)
-    output = full(state, torch.zeros(1), sample["avo"].unsqueeze(0), state, sample["rgt"].unsqueeze(0))
+    state = sample["low"].unsqueeze(0).to(device)
+    output = full(
+        state,
+        torch.zeros(1, device=device),
+        sample["avo"].unsqueeze(0).to(device),
+        state,
+        sample["rgt"].unsqueeze(0).to(device),
+    )
 print("elastic velocity:", tuple(output.velocity.shape))
 print("segmentation logits:", tuple(output.segmentation_logits.shape))
 print("graph embedding:", tuple(output.embeddings.shape))
@@ -845,11 +858,13 @@ print("learned attention:", tuple(output.attention_weights[0].shape))
         ),
         code(
             """
-t = torch.tensor([0.35])
+t = torch.tensor([0.35], device=device)
+low_device = sample["low"].unsqueeze(0).to(device)
+target_device = sample["target"].unsqueeze(0).to(device)
 state, target_velocity = straight_path(
-    sample["low"].unsqueeze(0), sample["target"].unsqueeze(0), t
+    low_device, target_device, t
 )
-assert torch.allclose(target_velocity, sample["target"].unsqueeze(0) - sample["low"].unsqueeze(0))
+assert torch.allclose(target_velocity, target_device - low_device)
 print("state and velocity:", tuple(state.shape), tuple(target_velocity.shape))
 """
         ),
@@ -899,7 +914,7 @@ assert bool(batch["physics_eligible"].all())
 operator_model = build_sage_avo_variant(
     "full",
     **sage_avo_model_kwargs(workflow),
-)
+).to(device)
 operator_model.set_norm_stats(normalization)
 optimizer = torch.optim.AdamW(operator_model.parameters(), lr=float(training["learning_rate"]))
 as_tensor = lambda name: torch.tensor(normalization[name], dtype=torch.float32).view(1, 3, 1, 1)
@@ -1029,6 +1044,7 @@ from sage_avo.experiments.prediction import load_controlled_model, predict_contr
 from sage_avo.forward import forward_avo_dense_spec, forward_specification_from_mapping
 from sage_avo.forward.qc import compare_forward_outputs
 from sage_avo.models import LEARNED_VARIANTS
+from sage_avo.runtime import print_torch_runtime, select_torch_device
 from sage_avo.visualization import plot_inversion_comparison
 from sage_avo.visualization.publication import graph_mechanism_figure
 
@@ -1058,16 +1074,18 @@ else:
     experiment_dir = private_root / "stage_artifacts" / "stage04" / "sage_avo_s01_v00332d_final_production"
     figure_dir = private_root / "figures" / "revision332d" / "stage05"
 seed_everything(int(workflow["experiment"]["seed"]))
+print_torch_runtime()
+device = select_torch_device(require_cuda=True, context="Notebook 05 model inference")
 figure_dir.mkdir(parents=True, exist_ok=True)
 """
         ),
         md(
             """
-            ## Part A — Controlled synthetic evaluation
+            ## Part A — Available epoch-40 baseline evaluation
 
-            The required conditions are low-frequency-prior-only, full SAGE-AVO, no-GNN, no-RGT-steering, and no-physics-loss. Learned variants are trained on the same realization split and evaluated on complete test realizations. RMSE, MAE, R², SSIM, Dice/F1, and mIoU are first computed per realization; pooled summaries and paired realization-level bootstrap intervals are secondary.
+            The available baseline comparison is low-frequency-prior-only versus the validation-selected epoch-40 full SAGE-AVO checkpoint. It is runnable before optional ablation checkpoints exist. RMSE, MAE, R², SSIM, Dice/F1, and mIoU are first computed per realization; pooled summaries and paired realization-level bootstrap intervals are secondary.
 
-            The test split is used only for final matched evaluation, never for checkpoint selection. Incomplete controlled variants remain explicitly unavailable; unmatched values are excluded from the comparison table.
+            The test split is used only for final evaluation, never for checkpoint selection. Missing no-GNN, no-RGT, and no-physics variants remain explicitly unavailable and are excluded rather than represented by unmatched values.
             """
         ),
         code(
@@ -1092,49 +1110,57 @@ checkpoint_status = pd.DataFrame([
 ])
 display(checkpoint_status)
 all_checkpoints_available = bool(checkpoint_status["available"].all())
+baseline_output_dir = private_root / "stage_artifacts" / "stage05" / "v00332d_epoch40_baseline"
+baseline_ready = bool(checkpoints["full"].exists())
 """
         ),
-        md("### A1. Whole-test prediction generation"),
+        md("### A1. Full-versus-prior whole-test prediction generation"),
         code(
             """
-run_predictions = os.getenv("SAGE_AVO_RUN_EVALUATION", "0") == "1"
-if run_predictions:
-    if not all_checkpoints_available:
-        missing = [str(path) for path in checkpoints.values() if not path.exists()]
-        raise FileNotFoundError("Controlled evaluation cannot start because checkpoints are missing:\\n" + "\\n".join(missing))
-    for variant in ("low_prior", *LEARNED_VARIANTS):
+run_baseline = os.getenv("SAGE_AVO_RUN_BASELINE_EVALUATION", "0") == "1"
+if run_baseline:
+    if not baseline_ready:
+        raise FileNotFoundError(f"Selected full-model checkpoint is missing: {checkpoints['full']}")
+    for variant in ("low_prior", "full"):
         predict_controlled_variant(
             repository=ROOT,
             config_path=workflow_path,
             config=workflow,
             dataset_directory=dataset_dir,
             experiment_directory=experiment_dir,
+            prediction_directory=baseline_output_dir,
+            checkpoint_path=checkpoints["full"] if variant == "full" else None,
             variant=variant,
+            device_name=str(device),
+            require_cuda=True,
+            inference_batch_size=2,
         )
 else:
-    print("Controlled evaluation is disabled (SAGE_AVO_RUN_EVALUATION=0).")
-    print("Activation requires the complete matched checkpoint set from Notebook 04.")
+    print("Baseline evaluation is disabled (SAGE_AVO_RUN_BASELINE_EVALUATION=0).")
+    print("It requires only the available epoch-40 full checkpoint and immutable test split.")
 """
         ),
         md("### A2. Metrics and non-cherry-picked representative selection"),
         code(
             """
-prediction_manifests = [
-    experiment_dir / "predictions" / variant / "manifest.json"
-    for variant in ("low_prior", *LEARNED_VARIANTS)
+baseline_manifests = [
+    baseline_output_dir / "predictions" / variant / "manifest.json"
+    for variant in ("low_prior", "full")
 ]
-metrics_available = all(path.exists() for path in prediction_manifests)
-if metrics_available:
+baseline_metrics_available = all(path.exists() for path in baseline_manifests)
+if baseline_metrics_available:
     summary, per_realization, paired, representative_id = evaluate_controlled_ablation(
-        experiment_directory=experiment_dir,
+        experiment_directory=baseline_output_dir,
         dataset_directory=dataset_dir,
         bootstrap_repetitions=int(workflow["evaluation"]["bootstrap_repetitions"]),
         bootstrap_confidence=float(workflow["evaluation"]["bootstrap_confidence"]),
         seed=int(workflow["experiment"]["seed"]),
+        variants=("low_prior", "full"),
     )
-    summary.to_csv(experiment_dir / "controlled_summary.csv", index=False)
-    per_realization.to_csv(experiment_dir / "controlled_per_realization.csv", index=False)
-    paired.to_csv(experiment_dir / "controlled_paired_improvements.csv", index=False)
+    baseline_output_dir.mkdir(parents=True, exist_ok=True)
+    summary.to_csv(baseline_output_dir / "baseline_summary.csv", index=False)
+    per_realization.to_csv(baseline_output_dir / "baseline_per_realization.csv", index=False)
+    paired.to_csv(baseline_output_dir / "baseline_paired_improvements.csv", index=False)
     display(summary)
     display(paired)
     print("Representative test realization (median full-model Vp RMSE):", representative_id)
@@ -1142,7 +1168,13 @@ else:
     summary = per_realization = paired = pd.DataFrame()
     representative_id = None
     display(pd.DataFrame(columns=["variant", "domain", "metric", "mean", "std", "n_realizations"]))
-    print("No controlled numerical claims are emitted until every matched prediction manifest exists.")
+    print("Run Part A1 to generate the full-versus-prior baseline results.")
+
+controlled_prediction_manifests = [
+    experiment_dir / "predictions" / variant / "manifest.json"
+    for variant in ("low_prior", *LEARNED_VARIANTS)
+]
+controlled_metrics_available = all(path.exists() for path in controlled_prediction_manifests)
 """
         ),
         md(
@@ -1162,7 +1194,7 @@ else:
         ),
         code(
             """
-if metrics_available:
+if controlled_metrics_available:
     realization_path = dataset_dir / "realizations" / f"realization_{representative_id:07d}.npz"
     with np.load(realization_path) as archive:
         avo = archive["avo"]
@@ -1179,7 +1211,7 @@ if metrics_available:
         dataset_dir,
         representative_id,
         figure_dir,
-        torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+        device,
     )
     print("Saved actual-attention graph mechanism figure and forward-contract JSON.")
 else:
@@ -1189,7 +1221,7 @@ else:
         md("## Part C — Whole-image synthetic inference"),
         code(
             """
-if metrics_available:
+if controlled_metrics_available:
     with np.load(realization_path) as archive:
         low_prior = archive["low"]
     figure = plot_inversion_comparison(truth, low_prior, full_prediction)
@@ -1274,7 +1306,6 @@ if run_field_inference and checkpoints["full"].exists():
         expected_forward_specification_sha256=forward_specification.sha256,
     )
     print("Calibration record:", calibration["approved_by"], calibration["manifest_sha256"])
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_controlled_model("full", workflow, checkpoints["full"], device)
     field_prediction, field_segmentation = infer_full_realization(
         model,
@@ -1283,7 +1314,7 @@ if run_field_inference and checkpoints["full"].exists():
         patch_shape=tuple(workflow["patches"]["shape"]),
         stride=tuple(workflow["patches"]["stride"]),
         steps=int(workflow["training"]["sample_steps_test"]),
-        batch_size=int(workflow["training"]["batch_size"]),
+        batch_size=min(2, int(workflow["training"]["batch_size"])),
         device=device,
     )
     np.savez_compressed(
@@ -1370,7 +1401,6 @@ if run_sensitivity:
             calibration_manifest=calibration_manifest,
             expected_forward_specification_sha256=forward_specification.sha256,
         )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     for variant, checkpoint in checkpoints.items():
         model = load_controlled_model(variant, workflow, checkpoint, device)
         member, _ = infer_full_realization(
@@ -1380,7 +1410,7 @@ if run_sensitivity:
             patch_shape=tuple(workflow["patches"]["shape"]),
             stride=tuple(workflow["patches"]["stride"]),
             steps=int(workflow["training"]["sample_steps_test"]),
-            batch_size=int(workflow["training"]["batch_size"]),
+            batch_size=min(2, int(workflow["training"]["batch_size"])),
             device=device,
         )
         np.savez_compressed(sensitivity_dir / f"member_{variant}.npz", elastic=member)

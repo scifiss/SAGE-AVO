@@ -84,19 +84,29 @@ def evaluate_controlled_ablation(
     bootstrap_repetitions: int = 2000,
     bootstrap_confidence: float = 0.95,
     seed: int = 12345,
+    variants: tuple[str, ...] = ALL_VARIANTS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, int]:
-    """Evaluate all five conditions on identical complete test realizations."""
+    """Evaluate selected conditions on identical complete test realizations.
+
+    ``low_prior`` and ``full`` are mandatory so the same routine can produce an
+    immediately useful baseline comparison before optional ablation checkpoints
+    exist.  The default remains the complete five-condition benchmark.
+    """
+    variants = tuple(variants)
+    unknown = set(variants) - set(ALL_VARIANTS)
+    if unknown:
+        raise ValueError(f"Unknown evaluation variants: {sorted(unknown)}")
+    if not {"low_prior", "full"}.issubset(variants):
+        raise ValueError("Evaluation requires both 'low_prior' and 'full'")
     experiment_root = Path(experiment_directory)
     dataset_root = Path(dataset_directory)
     split_ids = json.loads((dataset_root / "split_ids.json").read_text(encoding="utf-8"))
     test_ids = [int(value) for value in split_ids["test"]]
     records: list[dict[str, Any]] = []
     pooled_truth = {name: [] for name in PROPERTIES}
-    pooled_prediction = {
-        variant: {name: [] for name in PROPERTIES} for variant in ALL_VARIANTS
-    }
+    pooled_prediction = {variant: {name: [] for name in PROPERTIES} for variant in variants}
     pooled_segmentation_truth: list[np.ndarray] = []
-    pooled_segmentation_prediction = {variant: [] for variant in ALL_VARIANTS if variant != "low_prior"}
+    pooled_segmentation_prediction = {variant: [] for variant in variants if variant != "low_prior"}
     for realization_id in test_ids:
         with np.load(_realization_path(dataset_root, realization_id)) as archive:
             truth = archive["elastic"]
@@ -106,7 +116,7 @@ def evaluate_controlled_ablation(
         for channel, name in enumerate(PROPERTIES):
             pooled_truth[name].append(truth[channel][mask])
         pooled_segmentation_truth.append(segmentation_truth[mask])
-        for variant in ALL_VARIANTS:
+        for variant in variants:
             prediction_path = _prediction_path(experiment_root, variant, realization_id)
             if not prediction_path.exists():
                 raise FileNotFoundError(f"Missing controlled prediction: {prediction_path}")
@@ -140,7 +150,7 @@ def evaluate_controlled_ablation(
 
     per_realization = pd.DataFrame(records)
     pooled_rows: list[dict[str, Any]] = []
-    for variant in ALL_VARIANTS:
+    for variant in variants:
         for name in PROPERTIES:
             prediction = np.concatenate(pooled_prediction[variant][name])
             truth = np.concatenate(pooled_truth[name])
@@ -182,7 +192,7 @@ def evaluate_controlled_ablation(
 
     paired_rows: list[dict[str, Any]] = []
     full = per_realization[per_realization["variant"] == "full"]
-    for comparator in ("low_prior", "no_gnn", "no_rgt", "no_physics"):
+    for comparator in tuple(variant for variant in variants if variant != "full"):
         other = per_realization[per_realization["variant"] == comparator]
         merged = full.merge(
             other,

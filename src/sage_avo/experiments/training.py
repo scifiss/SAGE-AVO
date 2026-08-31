@@ -15,6 +15,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
 from sage_avo.config import seed_everything
+from sage_avo.runtime import print_torch_runtime, select_torch_device
 from sage_avo.diagnostics.accounting import EpochLossObserver
 from sage_avo.diagnostics.contracts import verify_frozen_revision331_inputs
 from sage_avo.diagnostics.live_logging import BatchProgressLogger, log_epoch_observability
@@ -427,13 +428,11 @@ def train_controlled_variant(
         seed,
         deterministic_torch=bool(config["hardware"].get("deterministic_algorithms", True)),
     )
-    device = torch.device(
-        device_name
-        or (
-            "cuda"
-            if torch.cuda.is_available() and config["hardware"]["preferred_device"] == "cuda"
-            else "cpu"
-        )
+    print_torch_runtime()
+    device = select_torch_device(
+        device_name,
+        require_cuda=device_name is not None and str(device_name).startswith("cuda"),
+        context=f"controlled training ({variant})",
     )
     dataset_root = Path(dataset_directory)
     experiment_root = Path(experiment_directory)

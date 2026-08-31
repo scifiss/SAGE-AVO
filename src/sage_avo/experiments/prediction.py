@@ -10,6 +10,7 @@ import numpy as np
 import torch
 
 from sage_avo.config import seed_everything
+from sage_avo.runtime import print_torch_runtime, select_torch_device
 from sage_avo.evaluation.inference import infer_full_realization, load_normalization
 from sage_avo.models.variants import (
     LEARNED_VARIANTS,
@@ -83,6 +84,10 @@ def predict_controlled_variant(
     experiment_directory: str | Path,
     variant: str,
     device_name: str | None = None,
+    checkpoint_path: str | Path | None = None,
+    prediction_directory: str | Path | None = None,
+    require_cuda: bool = False,
+    inference_batch_size: int | None = None,
 ) -> Path:
     """Write one prediction artifact per complete test realization."""
     if variant not in ("low_prior",) + LEARNED_VARIANTS:
@@ -94,7 +99,8 @@ def predict_controlled_variant(
     )
     dataset_root = Path(dataset_directory)
     experiment_root = Path(experiment_directory)
-    output = experiment_root / "predictions" / variant
+    prediction_root = Path(prediction_directory) if prediction_directory is not None else experiment_root
+    output = prediction_root / "predictions" / variant
     output.mkdir(parents=True, exist_ok=True)
     split_ids = json.loads((dataset_root / "split_ids.json").read_text(encoding="utf-8"))
     normalization = load_normalization(dataset_root)
@@ -102,15 +108,18 @@ def predict_controlled_variant(
     checkpoint: Path | None = None
     model = None
     if variant != "low_prior":
-        checkpoint = preferred_inference_checkpoint(
-            config,
-            experiment_root / "runs" / variant,
+        checkpoint = (
+            Path(checkpoint_path)
+            if checkpoint_path is not None
+            else preferred_inference_checkpoint(config, experiment_root / "runs" / variant)
         )
         if not checkpoint.exists():
             raise FileNotFoundError(f"Controlled checkpoint not found: {checkpoint}")
-        device = torch.device(
-            device_name
-            or ("cuda" if torch.cuda.is_available() and config["hardware"]["preferred_device"] == "cuda" else "cpu")
+        print_torch_runtime()
+        device = select_torch_device(
+            device_name,
+            require_cuda=require_cuda,
+            context=f"controlled inference ({variant})",
         )
         model = load_controlled_model(variant, config, checkpoint, device, normalization)
     patch_shape = tuple(int(value) for value in config["patches"]["shape"])
@@ -131,7 +140,7 @@ def predict_controlled_variant(
                     patch_shape=patch_shape,
                     stride=stride,
                     steps=int(config["training"]["sample_steps_test"]),
-                    batch_size=int(config["training"]["batch_size"]),
+                    batch_size=int(inference_batch_size or config["training"]["batch_size"]),
                     device=device,
                     valid_mask=archive["valid_mask"] if "valid_mask" in archive else None,
                     guidance_scale=(

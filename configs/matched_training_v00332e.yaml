@@ -1,0 +1,45 @@
+schema_version: 1
+revision: v00332e-matched-architecture-controls
+status: predeclared_not_started
+base_training_config: sage_avo_s01_v0031.yaml
+final_training_contract: final_training_v00332d.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+variants: [full, no_gnn, no_rgt, no_physics]
+shared_contract:
+  realization_split: identical_frozen_70_20_10
+  patch_index: identical
+  normalization: identical_train_only
+  low_frequency_prior: identical_2hz
+  masks_and_physics_halo: identical
+  batch_order: identical_by_seed
+  batch_size: 2
+  augmentation_stream: identical_by_seed
+  optimizer: AdamW
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  scheduler: cosine_annealing
+  epochs: 100
+  mandatory_review_epoch: 100
+  checkpoint_selection: validation_only_whole_realization
+  test_data_used_for_selection: false
+allowed_variant_differences:
+  full: {graph_mode: rgt, physics_weight: 0.5}
+  no_gnn: {graph_mode: none, physics_weight: 0.5}
+  no_rgt: {graph_mode: cartesian, physics_weight: 0.5}
+  no_physics: {graph_mode: rgt, physics_weight: 0.0}
+objective:
+  auxiliary_graph_smoothness: 0.0
+  graph_objective: no_aux_graph_loss
+  contrastive: 0.0
+  adaptive_task_weighting: false
+  physics_guided_sampling: false
+execution:
+  train_on_prepare: false
+  refuse_existing_run_directory: true
+  require_explicit_variant: true
+  require_explicit_device: true
+hardware:
+  target_gpu: NVIDIA_GeForce_GTX_1650_Ti_Max-Q
+  vram_gb: 4
+  mixed_precision: disabled_pending_exact_pp_and_graph_numerical_validation
