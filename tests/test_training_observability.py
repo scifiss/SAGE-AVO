@@ -71,7 +71,7 @@ def test_physics_accounting_excludes_inactive_patches_from_conditional_mean() ->
     assert "excludes ineligible pixels" in summary["mixed_batch_reduction"]
 
 
-def test_epoch_observer_does_not_change_training_trajectory(capsys) -> None:
+def test_epoch_observer_does_not_change_training_trajectory(capsys, tmp_path) -> None:
     torch.manual_seed(3)
     first = _small_model("no_gnn")
     second = deepcopy(first)
@@ -102,6 +102,7 @@ def test_epoch_observer_does_not_change_training_trajectory(capsys) -> None:
         total_batches=1,
         physics_weight=0.0,
         interval_batches=1,
+        output_path=tmp_path / "training_progress.log",
     )
 
     def combined_observer(batch_values, metrics) -> None:
@@ -128,6 +129,9 @@ def test_epoch_observer_does_not_change_training_trajectory(capsys) -> None:
     assert "epoch=1/1" in output
     assert "batch=1/1" in output
     assert "physics_active=false" in output
+    durable_output = (tmp_path / "training_progress.log").read_text(encoding="utf-8")
+    assert "epoch=1/1" in durable_output
+    assert "batch=1/1" in durable_output
 
 
 def test_graph_diagnostics_preserve_default_forward_and_optimizer() -> None:

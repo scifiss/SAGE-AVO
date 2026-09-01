@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -622,7 +623,11 @@ def train_controlled_variant(
         "model_input_at_inference": False,
         "synthetic_truth_used_by_model_forward": False,
     }
-    manifest["model_initialization_sha256"] = initialization_sha256
+    manifest["model_initialization_sha256"] = previous_manifest.get(
+        "model_initialization_sha256", initialization_sha256
+    )
+    if resume_from is not None:
+        manifest["resume_process_initialization_sha256"] = initialization_sha256
     if observability_enabled:
         manifest["observability"] = {
             "revision": observability_config["revision"],
@@ -803,24 +808,23 @@ def train_controlled_variant(
         writer = csv.DictWriter(stream, fieldnames=fieldnames)
         if not append:
             writer.writeheader()
+            stream.flush()
+            os.fsync(stream.fileno())
         for epoch_index in range(start_epoch, run_end_epoch):
             effective_weights = curriculum.weights_for_epoch(base_weights, epoch_index, epochs)
             train_observer = (
                 EpochLossObserver(effective_weights.physics) if observability_enabled else None
             )
-            progress_observer = (
-                BatchProgressLogger(
-                    epoch=epoch_index + 1,
-                    total_epochs=epochs,
-                    total_batches=min(
-                        len(train_loader),
-                        max_train_batches if max_train_batches is not None else len(train_loader),
-                    ),
-                    physics_weight=effective_weights.physics,
-                    interval_batches=50,
-                )
-                if observability_enabled
-                else None
+            progress_observer = BatchProgressLogger(
+                epoch=epoch_index + 1,
+                total_epochs=epochs,
+                total_batches=min(
+                    len(train_loader),
+                    max_train_batches if max_train_batches is not None else len(train_loader),
+                ),
+                physics_weight=effective_weights.physics,
+                interval_batches=50,
+                output_path=run_directory / "training_progress.log",
             )
             validation_observer = (
                 EpochLossObserver(effective_weights.physics) if observability_enabled else None
@@ -849,7 +853,7 @@ def train_controlled_variant(
                 contrastive_generator,
                 adaptive_weighter,
                 max_train_batches,
-                observe_training_batch if observability_enabled else None,
+                observe_training_batch,
                 graph_objective_settings,
             )
             validation_metrics = validate_epoch(
@@ -1011,6 +1015,7 @@ def train_controlled_variant(
                 )
             writer.writerow(row)
             stream.flush()
+            os.fsync(stream.fileno())
             if observability_enabled:
                 if train_observer is None or validation_observer is None:
                     raise RuntimeError("Observability observer was not initialized")

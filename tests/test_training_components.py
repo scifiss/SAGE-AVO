@@ -177,6 +177,7 @@ def test_checkpoint_round_trip_includes_optimizer_scheduler_and_rng(tmp_path: Pa
         scheduler=scheduler,
         generator_states={"time": generator.get_state()},
     )
+    assert not (tmp_path / ".checkpoint.pt.tmp").exists()
     restored = torch.nn.Linear(3, 2)
     restored_optimizer = torch.optim.AdamW(restored.parameters(), lr=2e-3)
     restored_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(

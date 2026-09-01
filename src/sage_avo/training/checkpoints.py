@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import os
 import random
 
 import numpy as np
@@ -87,6 +88,7 @@ def save_checkpoint(
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     module = model.module if hasattr(model, "module") else model
+    temporary = destination.with_name(f".{destination.name}.tmp")
     torch.save(
         {
             "model_state": module.state_dict(),
@@ -106,8 +108,11 @@ def save_checkpoint(
                 "generators": generator_states or {},
             },
         },
-        destination,
+        temporary,
     )
+    with temporary.open("rb") as stream:
+        os.fsync(stream.fileno())
+    os.replace(temporary, destination)
 
 
 def load_checkpoint(

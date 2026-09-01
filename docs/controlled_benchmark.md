@@ -125,6 +125,25 @@ Each training command requires an explicit variant and device and refuses to
 overwrite an existing run. The optional experimental objectives remain off so
 these runs isolate the advertised architecture/physics components.
 
+For laptop-safe execution, stop at an absolute epoch boundary and resume later:
+
+```bash
+# New run or resume to epoch 1.
+PYTHONPATH=src python scripts/run_matched_training_v00332e.py train \
+  --variant full --device cuda --until-epoch 1
+
+# Resume the same run from last.pt and stop after epoch 3.
+PYTHONPATH=src python scripts/run_matched_training_v00332e.py train \
+  --variant full --device cuda --until-epoch 3
+```
+
+Every completed epoch writes an atomic `last.pt`, fsyncs `training_log.csv`, and
+preserves optimizer, scheduler, task-weighter, and RNG states. If power is lost
+mid-epoch, the next command repeats only that incomplete epoch. Durable batch
+progress is appended every 50 optimizer steps to `training_progress.log`.
+`--archive-incomplete` is required to preserve and replace a crash directory
+that has no completed-epoch checkpoint.
+
 The representative test realization is the ID whose full-model Vp RMSE is
 closest to the test-set median. The rule and ID are saved before figure
 generation.

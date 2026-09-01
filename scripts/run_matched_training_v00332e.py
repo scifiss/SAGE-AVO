@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -56,6 +57,10 @@ def status(_: argparse.Namespace) -> None:
         "runs": {
             variant: {
                 "directory_exists": (experiment / "runs" / variant).exists(),
+                "last_completed_epoch": _last_completed_epoch(
+                    experiment / "runs" / variant
+                ),
+                "resumable": (experiment / "runs" / variant / "last.pt").exists(),
                 "checkpoint_exists": (
                     experiment / "runs" / variant / "best_whole_realization.pt"
                 ).exists(),
@@ -64,6 +69,25 @@ def status(_: argparse.Namespace) -> None:
         },
     }
     print(json.dumps(result, indent=2))
+
+
+def _last_completed_epoch(run: Path) -> int:
+    manifest = run / "manifest.json"
+    if not manifest.exists():
+        return 0
+    return int(json.loads(manifest.read_text(encoding="utf-8")).get("last_completed_epoch", 0))
+
+
+def _archive_incomplete_run(run: Path) -> Path:
+    """Preserve a run that crashed before its first restart checkpoint."""
+    if (run / "last.pt").exists() or _last_completed_epoch(run) > 0:
+        raise RuntimeError("Only a run without a completed epoch may be archived as incomplete")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    destination = run.with_name(f"{run.name}_interrupted_before_epoch1_{timestamp}")
+    if destination.exists():
+        raise FileExistsError(f"Archive destination already exists: {destination}")
+    run.rename(destination)
+    return destination
 
 
 def prepare(args: argparse.Namespace) -> None:
@@ -100,8 +124,25 @@ def train(args: argparse.Namespace) -> None:
     if prepared_payload.get("resolved_config_sha256") != canonical_hash(config):
         raise RuntimeError("Prepared resolved-config hash is stale; review and run prepare --refresh")
     run = experiment / "runs" / args.variant
-    if run.exists():
-        raise FileExistsError(f"Refusing to overwrite matched run: {run}")
+    resume_from = run / "last.pt"
+    if run.exists() and not resume_from.exists():
+        if not args.archive_incomplete:
+            raise RuntimeError(
+                f"Run exists without a restart checkpoint: {run}. "
+                "Inspect it, then pass --archive-incomplete to preserve and restart it."
+            )
+        archived = _archive_incomplete_run(run)
+        print(f"Archived incomplete run: {archived}")
+    resume_from = run / "last.pt"
+    completed = _last_completed_epoch(run)
+    target_epoch = int(args.until_epoch or contract["shared_contract"]["epochs"])
+    maximum_epoch = int(contract["shared_contract"]["epochs"])
+    if not 1 <= target_epoch <= maximum_epoch:
+        raise ValueError(f"--until-epoch must lie in [1, {maximum_epoch}]")
+    if target_epoch <= completed:
+        raise ValueError(
+            f"Target epoch {target_epoch} is not after completed epoch {completed}"
+        )
     expected = contract["allowed_variant_differences"][args.variant]
     configured_physics = float(config["model"]["variants"][args.variant]["physics_weight"])
     if configured_physics != float(expected["physics_weight"]):
@@ -114,6 +155,8 @@ def train(args: argparse.Namespace) -> None:
         experiment_directory=experiment,
         variant=args.variant,
         device_name=args.device,
+        resume_from=resume_from if resume_from.exists() else None,
+        stop_after_epoch=target_epoch,
     )
     print(f"Completed matched {args.variant}: {output}")
 
@@ -132,6 +175,16 @@ def parser() -> argparse.ArgumentParser:
     training = commands.add_parser("train")
     training.add_argument("--variant", choices=LEARNED_VARIANTS, required=True)
     training.add_argument("--device", required=True, help="Explicit device such as cuda:0")
+    training.add_argument(
+        "--until-epoch",
+        type=int,
+        help="Stop cleanly after this absolute epoch; rerun with a larger value to resume",
+    )
+    training.add_argument(
+        "--archive-incomplete",
+        action="store_true",
+        help="Preserve an existing zero-checkpoint crash directory before restarting",
+    )
     training.set_defaults(function=train)
     return root
 

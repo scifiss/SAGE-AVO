@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 from dataclasses import dataclass, field
 import math
+import os
 from pathlib import Path
 import time
 from typing import Any
@@ -33,6 +34,7 @@ class BatchProgressLogger:
     total_batches: int
     physics_weight: float
     interval_batches: int = 50
+    output_path: Path | None = None
     _started: float = field(default_factory=time.perf_counter, init=False)
     _last_report_time: float = field(default=0.0, init=False)
     _last_report_batch: int = field(default=0, init=False)
@@ -79,15 +81,21 @@ class BatchProgressLogger:
         else:
             memory = "gpu_mib=n/a peak_mib=n/a"
         status = " NONFINITE_LOSS" if nonfinite else ""
-        print(
+        message = (
             f"[train-progress] epoch={self.epoch}/{self.total_epochs} "
             f"batch={completed}/{self.total_batches} elapsed={_duration(elapsed)} "
             f"rolling_s_per_batch={rolling_seconds:.3f} eta={_duration(eta)} "
             f"weighted_total={metrics.total:.8g} raw_physics={metrics.physics:.8g} "
             f"physics_active={str(physics_active).lower()} "
-            f"physics_eligible={eligible_count}/{batch_size} {memory}{status}",
-            flush=True,
+            f"physics_eligible={eligible_count}/{batch_size} {memory}{status}"
         )
+        print(message, flush=True)
+        if self.output_path is not None:
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.output_path.open("a", encoding="utf-8") as stream:
+                stream.write(message + "\n")
+                stream.flush()
+                os.fsync(stream.fileno())
         self._last_report_time = now
         self._reported_batch = completed
 
