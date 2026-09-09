@@ -21,9 +21,16 @@ venv/
 data/*
 !data/README.md
 private_data/
+SAGE_AVO_private_artifacts/
+stage_artifacts/
+scientific_reconciliation/
 checkpoints/
 runs/
 outputs/
+artifacts/
+wandb/
+logs/
+*.log
 /srcavo.zip
 results/example_metrics.csv
 results/field_forward_qc.csv
@@ -40,6 +47,8 @@ results/field_forward_qc.csv
 *.mp4
 
 # Local path configuration; commit only the example
+.env
+.env.*
 configs/paths.yaml
 !configs/paths.example.yaml
 

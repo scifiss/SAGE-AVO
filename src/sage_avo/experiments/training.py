@@ -8,12 +8,12 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import torch
 from torch import Tensor
-from torch.utils.data import DataLoader, WeightedRandomSampler
+from torch.utils.data import DataLoader, Sampler, Subset, WeightedRandomSampler
 
 from sage_avo.config import seed_everything
 from sage_avo.runtime import print_torch_runtime, select_torch_device
@@ -53,6 +53,27 @@ from sage_avo.training.selection import (
 )
 
 from .manifest import build_run_manifest, write_json
+
+
+class FixedEpochIndexSampler(Sampler[int]):
+    """Deterministic predeclared index schedule for bounded matched experiments."""
+
+    def __init__(self, schedule: Sequence[Sequence[int]]) -> None:
+        self.schedule = tuple(tuple(int(value) for value in epoch) for epoch in schedule)
+        if not self.schedule or any(not epoch for epoch in self.schedule):
+            raise ValueError("fixed epoch index schedule must contain non-empty epochs")
+        self.epoch = 0
+
+    def set_epoch(self, epoch: int) -> None:
+        if epoch < 0 or epoch >= len(self.schedule):
+            raise IndexError("fixed epoch index schedule does not cover the requested epoch")
+        self.epoch = int(epoch)
+
+    def __iter__(self):
+        return iter(self.schedule[self.epoch])
+
+    def __len__(self) -> int:
+        return len(self.schedule[self.epoch])
 
 
 def _normalization_tensors(normalization: dict[str, list[float]]) -> PhysicsNormalization:
@@ -156,6 +177,14 @@ def _module_state_sha256(model: torch.nn.Module) -> str:
     for name, value in model.state_dict().items():
         digest.update(name.encode("utf-8"))
         digest.update(value.detach().cpu().contiguous().numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for block in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(block)
     return digest.hexdigest()
 
 
@@ -418,6 +447,10 @@ def train_controlled_variant(
     stop_after_epoch: int | None = None,
     finite_state_check_batches: tuple[int, ...] = (),
     abort_on_nonfinite: bool = False,
+    fixed_train_indices: Sequence[int] | None = None,
+    fixed_train_indices_by_epoch: Sequence[Sequence[int]] | None = None,
+    fixed_validation_indices: Sequence[int] | None = None,
+    initial_model_state: str | Path | None = None,
 ) -> Path:
     """Train one SAGE-AVO condition with the configured complete procedure."""
     configured_physics_weight = float(config["training"]["loss_weights"]["physics"])
@@ -479,16 +512,47 @@ def train_controlled_variant(
     sampler_generator = torch.Generator().manual_seed(seed + 13)
     time_generator = torch.Generator().manual_seed(seed + 17)
     contrastive_generator = torch.Generator(device=device).manual_seed(seed + 19)
-    train_dataset = IndexedRealizationPatches(
+    train_source_dataset = IndexedRealizationPatches(
         dataset_root,
         "train",
         augment=bool(training_config["augmentation"]["enabled"]),
         augmentation_config=_augmentation(config),
         augmentation_generator=augmentation_generator,
     )
-    validation_dataset = IndexedRealizationPatches(dataset_root, "validation")
-    if bool(training_config["weighted_patch_sampling"]["enabled"]):
-        patch_weights = build_patch_sampling_weights(train_dataset, _sampling(config))
+    validation_source_dataset = IndexedRealizationPatches(dataset_root, "validation")
+
+    def checked_indices(
+        indices: Sequence[int], dataset_length: int, split: str
+    ) -> list[int]:
+        resolved = [int(value) for value in indices]
+        if not resolved:
+            raise ValueError(f"Fixed {split} patch selection must not be empty")
+        if any(value < 0 or value >= dataset_length for value in resolved):
+            raise IndexError(f"Fixed {split} patch selection contains an out-of-range index")
+        return resolved
+
+    scheduled_sampler: FixedEpochIndexSampler | None = None
+    if fixed_train_indices is not None and fixed_train_indices_by_epoch is not None:
+        raise ValueError("Use either fixed_train_indices or fixed_train_indices_by_epoch")
+    if fixed_train_indices_by_epoch is not None:
+        if len(fixed_train_indices_by_epoch) < epochs:
+            raise ValueError("Fixed train schedule must cover every configured epoch")
+        schedule = [
+            checked_indices(epoch_indices, len(train_source_dataset), "train")
+            for epoch_indices in fixed_train_indices_by_epoch
+        ]
+        train_dataset = train_source_dataset
+        scheduled_sampler = FixedEpochIndexSampler(schedule)
+        sampler = scheduled_sampler
+        shuffle = False
+    elif fixed_train_indices is not None:
+        train_indices = checked_indices(fixed_train_indices, len(train_source_dataset), "train")
+        train_dataset = Subset(train_source_dataset, train_indices)
+        sampler = None
+        shuffle = False
+    elif bool(training_config["weighted_patch_sampling"]["enabled"]):
+        train_dataset = train_source_dataset
+        patch_weights = build_patch_sampling_weights(train_source_dataset, _sampling(config))
         sampler = WeightedRandomSampler(
             patch_weights,
             num_samples=len(patch_weights),
@@ -497,8 +561,16 @@ def train_controlled_variant(
         )
         shuffle = False
     else:
+        train_dataset = train_source_dataset
         sampler = None
         shuffle = True
+    if fixed_validation_indices is not None:
+        validation_indices = checked_indices(
+            fixed_validation_indices, len(validation_source_dataset), "validation"
+        )
+        validation_dataset = Subset(validation_source_dataset, validation_indices)
+    else:
+        validation_dataset = validation_source_dataset
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(training_config["batch_size"]),
@@ -522,6 +594,15 @@ def train_controlled_variant(
         variant,
         **sage_avo_model_kwargs(config),
     ).to(device)
+    initial_state_path = Path(initial_model_state) if initial_model_state is not None else None
+    if initial_state_path is not None:
+        initial_state = torch.load(initial_state_path, map_location=device, weights_only=True)
+        if not isinstance(initial_state, dict) or not all(
+            isinstance(name, str) and isinstance(value, Tensor)
+            for name, value in initial_state.items()
+        ):
+            raise TypeError("initial_model_state must contain a plain tensor state dictionary")
+        model.load_state_dict(initial_state, strict=True)
     model.set_norm_stats(normalization)
     initialization_sha256 = _module_state_sha256(model)
     base_weights = loss_weights_from_config(config, float(definition.physics_weight))
@@ -557,7 +638,7 @@ def train_controlled_variant(
         eta_min=float(training_config["scheduler_eta_min"]),
     )
     class_weights = _class_weights(
-        train_dataset,
+        train_source_dataset,
         classes=int(config["model"]["classes"]),
         foreground_boost=float(training_config["class_weight_foreground_boost"]),
     ).to(device)
@@ -626,6 +707,12 @@ def train_controlled_variant(
     manifest["model_initialization_sha256"] = previous_manifest.get(
         "model_initialization_sha256", initialization_sha256
     )
+    if initial_state_path is not None:
+        manifest["initial_model_state"] = {
+            "path": str(initial_state_path.resolve()),
+            "file_sha256": _file_sha256(initial_state_path),
+            "loaded_model_state_sha256": initialization_sha256,
+        }
     if resume_from is not None:
         manifest["resume_process_initialization_sha256"] = initialization_sha256
     if observability_enabled:
@@ -663,6 +750,45 @@ def train_controlled_variant(
             manifest["prior_best_validation_objective"] = best_flow
         if np.isfinite(best_sample):
             manifest["prior_best_sample_criterion"] = best_sample
+    if (
+        fixed_train_indices is not None
+        or fixed_train_indices_by_epoch is not None
+        or fixed_validation_indices is not None
+    ):
+        def index_digest(indices: Sequence[int] | None) -> str | None:
+            if indices is None:
+                return None
+            return hashlib.sha256(
+                json.dumps([int(value) for value in indices], separators=(",", ":")).encode()
+            ).hexdigest()
+
+        manifest["fixed_patch_budget"] = {
+            "train_patch_count": (
+                len(fixed_train_indices)
+                if fixed_train_indices is not None
+                else (
+                    len(fixed_train_indices_by_epoch[0])
+                    if fixed_train_indices_by_epoch is not None
+                    else 0
+                )
+            ),
+            "validation_patch_count": (
+                0 if fixed_validation_indices is None else len(fixed_validation_indices)
+            ),
+            "train_indices_sha256": index_digest(fixed_train_indices),
+            "train_epoch_schedule_sha256": (
+                hashlib.sha256(
+                    json.dumps(
+                        [[int(value) for value in epoch] for epoch in fixed_train_indices_by_epoch],
+                        separators=(",", ":"),
+                    ).encode()
+                ).hexdigest()
+                if fixed_train_indices_by_epoch is not None
+                else None
+            ),
+            "validation_indices_sha256": index_digest(fixed_validation_indices),
+            "repeats_same_train_patches_each_epoch": fixed_train_indices is not None,
+        }
     write_json(manifest_path, manifest)
 
     start_epoch = 0
@@ -811,6 +937,8 @@ def train_controlled_variant(
             stream.flush()
             os.fsync(stream.fileno())
         for epoch_index in range(start_epoch, run_end_epoch):
+            if scheduled_sampler is not None:
+                scheduled_sampler.set_epoch(epoch_index)
             effective_weights = curriculum.weights_for_epoch(base_weights, epoch_index, epochs)
             train_observer = (
                 EpochLossObserver(effective_weights.physics) if observability_enabled else None

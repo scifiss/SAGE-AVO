@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 import hashlib
 import json
 from pathlib import Path
@@ -144,10 +145,32 @@ def _parameter_groups(model: nn.Module) -> dict[str, list[tuple[str, nn.Paramete
             "graph.node_projection.",
             "graph.layers.",
             "graph.normalizations.",
+            "graph.tangential_layers.",
+            "graph.normal_layers.",
+            "graph.tangential_normalizations.",
+            "graph.normal_normalizations.",
+            "graph.relation_gate.",
+            "graph.structural_attention_raw_strengths",
+            "graph.elastic_attention_raw_strengths",
         ),
         "graph_node_projection": selected("graph.node_projection."),
-        "transformerconv_layer_1": selected("graph.layers.0."),
-        "transformerconv_layer_2": selected("graph.layers.1."),
+        "transformerconv_layer_1": selected(
+            "graph.layers.0.",
+            "graph.tangential_layers.0.",
+            "graph.normal_layers.0.",
+        ),
+        "transformerconv_layer_2": selected(
+            "graph.layers.1.",
+            "graph.tangential_layers.1.",
+            "graph.normal_layers.1.",
+        ),
+        "tangential_graph_branch": selected(
+            "graph.tangential_layers.", "graph.tangential_normalizations."
+        ),
+        "normal_graph_branch": selected("graph.normal_layers.", "graph.normal_normalizations."),
+        "relation_gate": selected("graph.relation_gate."),
+        "structural_attention_prior": selected("graph.structural_attention_raw_strengths"),
+        "elastic_structural_attention_prior": selected("graph.elastic_attention_raw_strengths"),
         "elastic_flow_decoder": selected("decoder."),
         "segmentation_decoder": selected("graph.segmentation."),
         "all_shared_trainable_parameters": shared,
@@ -327,12 +350,39 @@ def _physics_value(
     )
 
 
+@contextmanager
+def _cartesian_graph_diagnostic(graph: nn.Module) -> Iterator[None]:
+    """Temporarily select Cartesian edges without changing graph architecture."""
+    original_mode = graph.graph_mode
+    has_topology = hasattr(graph, "rgt_topology")
+    original_topology = getattr(graph, "rgt_topology", None)
+    cartesian_modes = {
+        "rgt": "cartesian",
+        "relational_rgt": "cartesian",
+        "relational_candidate_rgt": "relational_candidate_cartesian",
+        "relational_structural_prior_rgt": "relational_structural_prior_cartesian",
+        "relational_task_decoupled_rgt": "relational_task_decoupled_cartesian",
+        "relational_task_specific_rgt": "relational_task_specific_cartesian",
+    }
+    try:
+        graph.graph_mode = cartesian_modes.get(original_mode, original_mode)
+        # The single-stream encoder selects edges by topology; relational
+        # encoders still select them by graph_mode. Restore both after probing.
+        if has_topology:
+            graph.rgt_topology = "cartesian"
+        yield
+    finally:
+        graph.graph_mode = original_mode
+        if has_topology:
+            graph.rgt_topology = original_topology
+
+
 def _graph_attention_details(
     model: nn.Module,
     values: dict[str, Tensor],
     state: Tensor,
     time: Tensor,
-) -> tuple[Any, list[Tensor], Tensor, Tensor, Tensor]:
+) -> tuple[Any, list[dict[str, Any]], Tensor, Tensor, Tensor]:
     height, width = values["rgt"].shape[-2:]
     time_features = model.time_embedding(time[:, None]).unsqueeze(-1).unsqueeze(-1)
     time_features = time_features.expand(-1, -1, height, width)
@@ -342,35 +392,55 @@ def _graph_attention_details(
     angular, gradient = angular_features(values["avo"], model.representative_angles)
     angle_tokens = angular.flatten(2).transpose(1, 2)
     projected = model.graph.node_projection(torch.cat((tokens, angle_tokens), dim=-1))
-    edges = model.graph(
-        tokens,
-        values["avo"],
-        values["rgt"],
-    )
-    attentions: list[Tensor] = []
+    if hasattr(model.graph, "diagnostic_forward"):
+        edges, detail_batches, gates = model.graph.diagnostic_forward(
+            tokens, values["avo"], values["rgt"]
+        )
+        details = [dict(detail) for detail in detail_batches[0]]
+        for detail in details:
+            stream = str(detail.get("stream", "shared"))
+            detail["relation_gate_mean"] = gates[stream][0].mean(dim=0)
+        return edges, details, cnn, angular, gradient
+
+    edges = model.graph(tokens, values["avo"], values["rgt"])
+    details: list[dict[str, Any]] = []
     node_features = projected[0]
     edge_index = edges[2][0]
     edge_attribute = edges[3][0].unsqueeze(-1)
-    for layer, normalization_layer in zip(model.graph.layers, model.graph.normalizations):
+    for layer_index, (layer, normalization_layer) in enumerate(
+        zip(model.graph.layers, model.graph.normalizations), start=1
+    ):
         result, (_, alpha) = layer(
             node_features,
             edge_index,
             edge_attr=edge_attribute,
             return_attention_weights=True,
         )
-        attentions.append(alpha.mean(dim=-1))
+        details.append(
+            {
+                "stream": "legacy_shared",
+                "relation": "legacy_combined",
+                "layer": layer_index,
+                "edge_index": edge_index,
+                "attention": alpha.mean(dim=-1),
+            }
+        )
         node_features = torch.nn.functional.gelu(normalization_layer(result))
-    return edges, attentions, cnn, angular, gradient
+    return edges, details, cnn, angular, gradient
 
 
 def _attention_summary(
     *,
     epoch: int,
+    stream: str,
+    relation: str,
     layer: int,
     attention: Tensor,
     edge_index: Tensor,
     rgt: Tensor,
     avo: Tensor,
+    attention_prior: Tensor | None = None,
+    structural_strengths: Tensor | None = None,
 ) -> dict[str, Any]:
     probability = attention.detach()
     source, destination = edge_index
@@ -395,8 +465,10 @@ def _attention_summary(
     high_avo_similarity = avo_difference <= torch.quantile(avo_difference, 0.25)
     top_count = max(1, int(round(0.1 * probability.numel())))
     total = probability.sum().clamp_min(1e-12)
-    return {
+    result = {
         "epoch": epoch,
+        "stream": stream,
+        "relation": relation,
         "layer": layer,
         "attention_mean": float(probability.mean()),
         "attention_entropy_normalized": float(normalized_entropy.mean()),
@@ -409,6 +481,30 @@ def _attention_summary(
             probability[high_avo_similarity].sum() / total
         ),
     }
+    if attention_prior is not None:
+        prior = attention_prior.detach()
+        high_prior = prior >= torch.quantile(prior, 0.5)
+        centered_attention = probability - probability.mean()
+        centered_prior = prior - prior.mean()
+        denominator = centered_attention.norm() * centered_prior.norm()
+        result.update(
+            {
+                "attention_prior_std": float(prior.std(unbiased=False)),
+                "high_structural_prior_attention_fraction": float(
+                    probability[high_prior].sum() / total
+                ),
+                "attention_prior_correlation": (
+                    float(torch.dot(centered_attention, centered_prior) / denominator)
+                    if float(denominator) > 0
+                    else np.nan
+                ),
+            }
+        )
+    if structural_strengths is not None:
+        strengths = structural_strengths.detach()
+        result["rgt_attention_strength"] = float(strengths[0])
+        result["avo_attention_strength"] = float(strengths[1])
+    return result
 
 
 def _elastic_metrics(
@@ -776,30 +872,41 @@ def analyze_checkpoint(
         "reference_interpretation": "truth level is not assumed to be zero",
     }
 
-    graph_result, attentions, cnn, angular, gradient = _graph_attention_details(
+    graph_result, attention_details, cnn, angular, gradient = _graph_attention_details(
         model, values, state, time
     )
-    edge_indices = graph_result[2]
     graph_rows: list[dict[str, Any]] = []
-    for layer_index, attention in enumerate(attentions, start=1):
-        graph_rows.append(
-            _attention_summary(
-                epoch=epoch,
-                layer=layer_index,
-                attention=attention,
-                edge_index=edge_indices[0],
-                rgt=values["rgt"][0],
-                avo=values["avo"][0],
-            )
+    for detail in attention_details:
+        row = _attention_summary(
+            epoch=epoch,
+            stream=str(detail.get("stream", "shared")),
+            relation=str(detail["relation"]),
+            layer=int(detail["layer"]),
+            attention=detail["attention"],
+            edge_index=detail["edge_index"],
+            rgt=values["rgt"][0],
+            avo=values["avo"][0],
+            attention_prior=detail.get("attention_prior"),
+            structural_strengths=detail.get("structural_strengths"),
         )
+        if "relation_gate_mean" in detail:
+            gate = detail["relation_gate_mean"]
+            row.update(
+                {
+                    "local_gate_mean": float(gate[0]),
+                    "tangential_gate_mean": float(gate[1]),
+                    "normal_gate_mean": float(gate[2]),
+                }
+            )
+        graph_rows.append(row)
     bypass_velocity = model.decoder(cnn)
-    original_mode = model.graph.graph_mode
-    try:
-        model.graph.graph_mode = "cartesian"
+    with _cartesian_graph_diagnostic(model.graph):
         cartesian = model(state, time, values["avo"], values["low"], values["rgt"])
-    finally:
-        model.graph.graph_mode = original_mode
-    graph_rows[0].update(
+    mechanism_row = next(
+        (row for row in graph_rows if row.get("stream") in {"elastic", "shared", "legacy_shared"}),
+        graph_rows[0],
+    )
+    mechanism_row.update(
         {
             "graph_embedding_rms": float(model_output.embeddings.square().mean().sqrt()),
             "graph_reinjection_velocity_rms": float(
@@ -902,7 +1009,7 @@ def analyze_checkpoint(
     _upsert_rows(
         diagnostic_directory / "graph_learning_summary.csv",
         graph_rows,
-        ["epoch", "layer"],
+        ["epoch", "stream", "relation", "layer"],
     )
     _upsert_rows(
         diagnostic_directory / "fixed_patch_metrics.csv",

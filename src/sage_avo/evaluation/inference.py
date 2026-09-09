@@ -27,7 +27,7 @@ def blend_window(shape: tuple[int, int]) -> np.ndarray:
     return np.maximum(np.outer(vertical, horizontal), 1e-3).astype(np.float32)
 
 
-@torch.no_grad()
+@torch.inference_mode()
 def infer_full_realization(
     model: nn.Module,
     *,
@@ -103,6 +103,10 @@ def infer_full_realization(
             elastic_sum[(slice(None),) + spatial] += physical[item] * window[None]
             probability_sum[(slice(None),) + spatial] += probabilities[item] * window[None]
             weight_sum[spatial] += window
+        # Whole sections are intentionally accumulated on CPU.  Drop every
+        # disposable CUDA tensor before constructing the next tile batch.
+        del avo_batch, low_batch, rgt_batch, mask_batch
+        del prediction, final_time, logits, physical, probabilities
     elastic = elastic_sum / np.maximum(weight_sum[None], 1e-12)
     probabilities = probability_sum / np.maximum(weight_sum[None], 1e-12)
     return elastic.astype(np.float32), probabilities.argmax(axis=0).astype(np.uint8)

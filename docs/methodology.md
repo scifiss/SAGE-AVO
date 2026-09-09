@@ -94,9 +94,18 @@ becomes a graph node. For each pixel, an adjacent-trace edge selects the sample
 within ±3 vertical indices whose RGT is closest. Trace-wise vertical edges are
 also included. TransformerConv layers propagate information over these edges.
 
-Edge attributes decay with the difference in AVO gradient. Similar-gradient
-nodes therefore exchange information more strongly. TransformerConv graph
-attention operates on the RGT-steered graph branch.
+The scalar AVO-gradient affinity decays with gradient contrast and is supplied
+as a learned TransformerConv edge feature, affecting both attention keys and
+message values. It is not an enforced multiplicative attention weight: a larger
+affinity does not guarantee stronger message passing between those nodes.
+
+The opt-in v00332p/q topology keeps the legacy graph separately selectable.
+Corrected RGT matching resolves near ties by minimum absolute displacement and
+then deterministic source-node parity; the confidence-filtered variant can omit
+uncertain lateral links. Cartesian, shuffled-neighbor, and parameter-matched
+root-only controls remain separate conditions. RGT-specific value remains under
+controlled investigation; these diagnostic configurations are not evidence of
+global superiority.
 
 ## Deterministic conditional residual transport
 

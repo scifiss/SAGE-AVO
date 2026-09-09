@@ -1,0 +1,98 @@
+schema_version: 1
+revision: v00332m-midstrength-elastic-attention-diagnostics
+status: diagnostic_only_not_a_matched_control_or_production_result
+base_training_config: sage_avo_s01_v0031.yaml
+observability_config: training_observability_v00332d.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+experiment_name: sage_avo_s01_v00332m_midstrength_elastic_attention_diagnostics
+
+source_experiment:
+  revision: v00332k-task-decoupled-graph-routing-diagnostics
+  experiment_name: sage_avo_s01_v00332k_task_decoupled_graph_diagnostics
+  expected_selection_file_sha256: 8e2efd68e35b4c8c40792e5024e8cb46daf718f8cc1d46ac5556a2f16815e704
+  expected_probe_file_sha256: 284aea22fc5c4303cbef89eb496e354fa9f9f390daca59e5d3508f7129b57343
+  expected_initial_state_file_sha256: 6fd743783a630ef90fddb300011a9c884d93a713d0513e618d2c6a644e77ee1b
+  expected_initial_model_state_sha256: 2e7160f346a999adbb679c9d96c4de858677a700183d8d6e6c94f4d28657f698
+  expected_architecture_parameter_count: 427661
+  expected_train_patch_count: 64
+  expected_validation_patch_count: 32
+  expected_train_indices_sha256: ebd9600d3cc2f5dd1edcc801f5245f7937500cd151365d0fb66f0efa299bf49b
+  expected_validation_indices_sha256: e5837496d3d3f053ae6f318b516ccb3c732b64a0a456359dfa89ef4a36b6cfc0
+
+fixed_patch_budget:
+  epochs: 3
+  batch_size: 2
+  train_batches_per_epoch: 32
+  validation_batches_per_epoch: 16
+  repeat_same_train_patches_each_epoch: true
+
+experimental_graph:
+  mode: relational_task_specific_rgt
+  relations: [tangential_equal_rgt_candidates, normal_rgt_gradient_candidates]
+  relation_candidates: 2
+  max_tangential_shift_samples: 3
+  normal_lateral_shift_samples: 1
+  edge_attributes: [avo_gradient_affinity, rgt_affinity, signed_row_offset, signed_column_offset]
+  elastic_structural_prior_initial_strengths:
+    - [0.25, 0.25]
+    - [0.25, 0.25]
+  task_specific_structural_attention:
+    insertion: additive_before_destination_softmax
+    normalized_avo_contrast: negative_log_avo_affinity
+    normalized_rgt_contrast: negative_log_rgt_affinity
+    tangential_formula: -softplus(rgt_strength)*rgt_contrast-softplus(avo_strength)*avo_contrast
+    normal_formula: +softplus(rgt_strength)*rgt_contrast+softplus(avo_strength)*avo_contrast
+    segmentation_initial_strengths:
+      tangential: [0.5, 0.5]
+      normal: [0.5, 0.5]
+    elastic_initial_strengths:
+      tangential: [0.25, 0.25]
+      normal: [0.25, 0.25]
+    segmentation_strength_gradients: [segmentation_cross_entropy, segmentation_dice]
+    elastic_strength_gradients: [flow, full_property, ssim, exact_pp_physics]
+    crossed_strength_gradients: prohibited
+    added_trainable_scalar_count: 4
+    total_task_specific_strength_scalar_count: 8
+  transformerconv_parameters: shared_between_tasks
+  relation_gate_parameters: shared_between_tasks_with_separate_activations
+  fusion: learned_nodewise_softmax_per_task
+  initialization: all_v00332k_tensors_identical_plus_four_elastic_strength_scalars_at_0.25
+
+diagnostic_probes:
+  after_each_completed_epoch: true
+  probe_patch_count: 2
+  deterministic_time: 0.5
+  include_whole_realizations: false
+  flow_integration_steps: 20
+  compare_streams: [segmentation, elastic]
+  direct_selectivity_metrics:
+    - per_stream_attention_entropy
+    - per_stream_attention_prior_correlation
+    - segmentation_structural_strengths
+    - elastic_structural_strengths
+    - per_stream_relation_gate_mean
+
+objective:
+  auxiliary_graph_smoothness: 0.0
+  graph_objective: no_aux_graph_loss
+  contrastive: 0.0
+  adaptive_task_weighting: false
+  physics_guided_sampling: false
+
+acceptance_gate:
+  numerical_integrity_required: true
+  elastic_attention_concentration_between_v00332k_and_v00332l: true
+  epoch3_fixed_objective_must_not_regress_vs_both_endpoints: true
+  epoch3_sample_criterion_must_not_regress_vs_both_endpoints: true
+  epoch3_physics_must_not_regress_vs_both_endpoints: true
+  epoch3_class1_iou_must_not_regress_vs_both_endpoints: true
+
+scope:
+  comparison: fixed_elastic_attention_strength_endpoints_0.0_0.5_vs_midpoint_0.25
+  only_scientific_mechanism_changed: elastic_structural_attention_initial_strength
+  initialization_choice: predeclared_arithmetic_midpoint_not_result_fitted
+  parameter_capacity_changed_vs_v00332l: false
+  training_patch_budget_changed: false
+  adds_auxiliary_loss: false
+  final_controlled_evidence: false

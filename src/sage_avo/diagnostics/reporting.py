@@ -51,7 +51,7 @@ MACHINE_OUTPUT_SCHEMAS = {
     "gradient_cosines.csv": ["epoch", "objective_a", "objective_b"],
     "physics_floor_diagnostics.csv": ["epoch"],
     "graph_floor_diagnostics.csv": ["epoch"],
-    "graph_learning_summary.csv": ["epoch", "layer"],
+    "graph_learning_summary.csv": ["epoch", "stream", "relation", "layer"],
     "fixed_patch_metrics.csv": ["epoch", "patch_role", "property"],
     "whole_realization_metrics.csv": ["epoch", "realization_id", "property"],
     "checkpoint_comparison.csv": ["checkpoint", "epoch", "criterion"],
@@ -294,9 +294,7 @@ def _raw_loss_figure(output: Path, figures: Path) -> list[str]:
         selected = table[table.component.isin(OPTIMIZED_COMPONENTS)]
         _line_by_component(axes[0], selected, "raw_loss", split="validation")
         axes[0].set(title="(a) Raw validation losses", xlabel="epoch", ylabel="raw loss")
-        _line_by_component(
-            axes[1], selected, "normalized_to_epoch_1", split="validation"
-        )
+        _line_by_component(axes[1], selected, "normalized_to_epoch_1", split="validation")
         axes[1].axhline(1.0, color="black", lw=0.8, ls="--")
         axes[1].set(
             title="(b) Raw losses normalized to epoch 1",
@@ -495,9 +493,14 @@ def _graph_figures(output: Path, figures: Path) -> list[str]:
         _empty(axes[0], "Awaiting checkpoint graph diagnostics")
         _empty(axes[1], "Awaiting checkpoint graph diagnostics")
     else:
-        for layer, group in table.groupby("layer"):
-            axes[0].plot(group.epoch, group.attention_concentration, "o-", label=f"layer {layer}")
-            axes[1].plot(group.epoch, group.top_decile_attention_mass, "o-", label=f"layer {layer}")
+        grouping = [column for column in ("stream", "relation", "layer") if column in table]
+        for key, group in table.groupby(grouping):
+            if isinstance(key, tuple):
+                label = " ".join(str(value) for value in key[:-1]) + f" layer {key[-1]}"
+            else:
+                label = f"layer {key}"
+            axes[0].plot(group.epoch, group.attention_concentration, "o-", label=label)
+            axes[1].plot(group.epoch, group.top_decile_attention_mass, "o-", label=label)
         for axis in axes:
             axis.legend(frameon=False)
             axis.set(xlabel="epoch")
@@ -510,6 +513,8 @@ def _graph_figures(output: Path, figures: Path) -> list[str]:
 
     figure, axis = plt.subplots(figsize=(10, 5), constrained_layout=True)
     first = table[table.get("layer", pd.Series(dtype=float)) == 1]
+    if "relation" in first and not first.empty:
+        first = first.drop_duplicates("epoch", keep="first")
     if first.empty or "graph_reinjection_velocity_rms" not in first:
         _empty(axis, "Awaiting graph reinjection diagnostics")
     else:

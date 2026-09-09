@@ -11,6 +11,17 @@ residual transport, and differentiable seismic-consistency constraints.
 
 ![SAGE-AVO workflow](figures/workflow.svg)
 
+## GNN/RGT review snapshot
+
+The `review/rgt-gnn-reconciliation` branch preserves the current graph implementation,
+v00332f–q diagnostic scripts/configurations, and regression tests for external review;
+it is not a new release or a new experiment. RGT-specific value remains under
+controlled investigation. The generic Cartesian diagnostic now temporarily selects
+both graph mode and topology and restores them afterward. Previously generated
+diagnostic outputs have not been recomputed or rewritten by this correction.
+Private data, checkpoints, and experiment results are not included. Configure local
+paths using `configs/paths.example.yaml`; do not commit `configs/paths.yaml`.
+
 ## Release scope
 
 Version 0.1 provides the five-stage research implementation and orchestration: field structure and elastic-background construction, field-conditioned geological realization generation, exact-physics AVO synthesis, leakage-safe ML dataset construction, controlled SAGE-AVO training, and evaluation/field-deployment orchestration. Proprietary field inputs, trained checkpoints, generated field artifacts, and controlled benchmark outputs are not distributed in this public release. Field inference code is a deployment/QC framework; this release does not claim independent field validation or publish final field-performance results.

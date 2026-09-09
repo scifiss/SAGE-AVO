@@ -1,0 +1,62 @@
+schema_version: 1
+revision: v00332i-top2-candidate-relation-attention-diagnostics
+status: diagnostic_only_not_a_matched_control_or_production_result
+base_training_config: sage_avo_s01_v0031.yaml
+observability_config: training_observability_v00332d.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+experiment_name: sage_avo_s01_v00332i_top2_candidate_relation_diagnostics
+
+# Freeze all v00332h inputs and initialization. The only scientific change is
+# exposing two candidate neighbors per relation instead of one hard choice.
+source_experiment:
+  revision: v00332h-dual-relation-rgt-fixed-budget-diagnostics
+  experiment_name: sage_avo_s01_v00332h_dual_relation_rgt_diagnostics
+  expected_selection_file_sha256: 8e2efd68e35b4c8c40792e5024e8cb46daf718f8cc1d46ac5556a2f16815e704
+  expected_probe_file_sha256: 284aea22fc5c4303cbef89eb496e354fa9f9f390daca59e5d3508f7129b57343
+  expected_initial_state_file_sha256: 598a5fa237563dbbf39d0a26529162d8144969bf5509c537ff17b8f0e8335b54
+  expected_initial_model_state_sha256: 5823a42fb108b0b820fb19bc90709c2995bc068bf869cdcb5f9d9c440d569888
+  expected_train_patch_count: 64
+  expected_validation_patch_count: 32
+  expected_train_indices_sha256: ebd9600d3cc2f5dd1edcc801f5245f7937500cd151365d0fb66f0efa299bf49b
+  expected_validation_indices_sha256: e5837496d3d3f053ae6f318b516ccb3c732b64a0a456359dfa89ef4a36b6cfc0
+
+fixed_patch_budget:
+  epochs: 3
+  batch_size: 2
+  train_batches_per_epoch: 32
+  validation_batches_per_epoch: 16
+  repeat_same_train_patches_each_epoch: true
+
+experimental_graph:
+  mode: relational_candidate_rgt
+  relations: [tangential_equal_rgt_candidates, normal_rgt_gradient_candidates]
+  relation_candidates: 2
+  max_tangential_shift_samples: 3
+  normal_lateral_shift_samples: 1
+  candidate_selection:
+    tangential: two_lowest_rgt_mismatch
+    normal: two_highest_rgt_change_per_spatial_distance
+  edge_attributes: [avo_gradient_affinity, rgt_affinity, signed_row_offset, signed_column_offset]
+  fusion: learned_nodewise_softmax
+  streams: [local, tangential, normal]
+  initialization: byte_identical_v00332h_initial_model_state
+
+diagnostic_probes:
+  after_each_completed_epoch: true
+  probe_patch_count: 2
+  deterministic_time: 0.5
+  include_whole_realizations: false
+  flow_integration_steps: 20
+
+objective:
+  auxiliary_graph_smoothness: 0.0
+  graph_objective: no_aux_graph_loss
+  contrastive: 0.0
+  adaptive_task_weighting: false
+  physics_guided_sampling: false
+
+scope:
+  comparison: v00332h_hard_neighbor_relations_vs_v00332i_top2_candidate_relations
+  only_scientific_mechanism_changed: candidate_edge_multiplicity_and_attention_choice
+  final_controlled_evidence: false

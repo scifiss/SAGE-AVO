@@ -49,8 +49,7 @@ def sage_avo_model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
     else:
         physics_angles = shared_specification.angles_degrees
         physics_bands = tuple(
-            (band.minimum_degrees, band.maximum_degrees)
-            for band in shared_specification.bands
+            (band.minimum_degrees, band.maximum_degrees) for band in shared_specification.bands
         )
         wavelet_hz = shared_specification.wavelets[0].peak_frequency_hz
         dt_seconds = shared_specification.dt_seconds
@@ -60,9 +59,7 @@ def sage_avo_model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
         mute_end = shared_specification.mute_end
         taper_samples = shared_specification.taper_samples
     guidance = training["physics_guided_sampling"]
-    representative_angles = tuple(
-        (minimum + maximum) / 2.0 for minimum, maximum in physics_bands
-    )
+    representative_angles = tuple((minimum + maximum) / 2.0 for minimum, maximum in physics_bands)
     configured_representatives = tuple(
         float(value) for value in model["representative_angles_degrees"]
     )
@@ -71,11 +68,48 @@ def sage_avo_model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
             "model.representative_angles_degrees must equal the configured "
             f"angle-band midpoints {representative_angles}"
         )
+    experimental_graph = model.get("experimental_graph", {})
     return {
         "hidden_channels": int(model["hidden_channels"]),
         "graph_layers": int(model["graph_layers"]),
         "graph_heads": int(model["graph_heads"]),
         "max_rgt_shift": int(model["max_rgt_shift_samples"]),
+        "normal_rgt_lateral_shift": int(experimental_graph.get("normal_lateral_shift_samples", 1)),
+        "graph_relation_candidates": int(experimental_graph.get("relation_candidates", 1)),
+        "graph_structural_prior_initial_strengths": tuple(
+            tuple(float(value) for value in relation)
+            for relation in experimental_graph.get(
+                "structural_prior_initial_strengths", ((0.5, 0.5), (0.5, 0.5))
+            )
+        ),
+        "graph_elastic_structural_prior_initial_strengths": tuple(
+            tuple(float(value) for value in relation)
+            for relation in experimental_graph.get(
+                "elastic_structural_prior_initial_strengths",
+                experimental_graph.get(
+                    "structural_prior_initial_strengths",
+                    ((0.5, 0.5), (0.5, 0.5)),
+                ),
+            )
+        ),
+        "graph_elastic_structural_prior_component_mask": tuple(
+            tuple(float(value) for value in relation)
+            for relation in experimental_graph.get(
+                "elastic_structural_prior_component_mask", ((1.0, 1.0), (1.0, 1.0))
+            )
+        ),
+        "graph_mode_override": experimental_graph.get("mode"),
+        "rgt_topology": experimental_graph.get("rgt_topology"),
+        "graph_neighbor_scale": float(experimental_graph.get("neighbor_scale", 1.0)),
+        "confidence_normalized_mismatch_threshold": experimental_graph.get(
+            "confidence_normalized_mismatch_threshold"
+        ),
+        "confidence_normalized_discontinuity_threshold": experimental_graph.get(
+            "confidence_normalized_discontinuity_threshold"
+        ),
+        "confidence_dip_residual_threshold": experimental_graph.get(
+            "confidence_dip_residual_threshold"
+        ),
         "classes": int(model["classes"]),
         "representative_angles": representative_angles,
         "physics_angles_degrees": physics_angles,
@@ -90,10 +124,7 @@ def sage_avo_model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
         "guidance_start_fraction": float(guidance["start_fraction"]),
         "guidance_interval_steps": int(guidance["interval_steps"]),
         "residual_trust_region_scales": (
-            tuple(
-                float(value)
-                for value in training["residual_trust_region"]["normalized_scales"]
-            )
+            tuple(float(value) for value in training["residual_trust_region"]["normalized_scales"])
             if bool(training.get("residual_trust_region", {}).get("enabled", False))
             else None
         ),
@@ -121,6 +152,25 @@ def build_sage_avo_variant(
     graph_layers: int = 2,
     graph_heads: int = 4,
     max_rgt_shift: int = 3,
+    normal_rgt_lateral_shift: int = 1,
+    graph_relation_candidates: int = 1,
+    graph_structural_prior_initial_strengths: tuple[tuple[float, float], tuple[float, float]] = (
+        (0.5, 0.5),
+        (0.5, 0.5),
+    ),
+    graph_elastic_structural_prior_initial_strengths: tuple[
+        tuple[float, float], tuple[float, float]
+    ]
+    | None = None,
+    graph_elastic_structural_prior_component_mask: tuple[
+        tuple[float, float], tuple[float, float]
+    ] = ((1.0, 1.0), (1.0, 1.0)),
+    graph_mode_override: str | None = None,
+    rgt_topology: str | None = None,
+    graph_neighbor_scale: float = 1.0,
+    confidence_normalized_mismatch_threshold: float | None = None,
+    confidence_normalized_discontinuity_threshold: float | None = None,
+    confidence_dip_residual_threshold: float | None = None,
     classes: int = 3,
     representative_angles: tuple[float, float, float] = (10.0, 24.0, 38.0),
     physics_angles_degrees: tuple[float, ...] = tuple(float(value) for value in range(3, 46)),
@@ -149,7 +199,25 @@ def build_sage_avo_variant(
         graph_layers=graph_layers,
         graph_heads=graph_heads,
         max_rgt_shift=max_rgt_shift,
-        graph_mode=definition.graph_mode,
+        graph_mode=graph_mode_override or definition.graph_mode,
+        rgt_topology=rgt_topology,
+        graph_neighbor_scale=graph_neighbor_scale,
+        confidence_normalized_mismatch_threshold=(
+            confidence_normalized_mismatch_threshold
+        ),
+        confidence_normalized_discontinuity_threshold=(
+            confidence_normalized_discontinuity_threshold
+        ),
+        confidence_dip_residual_threshold=confidence_dip_residual_threshold,
+        normal_rgt_lateral_shift=normal_rgt_lateral_shift,
+        graph_relation_candidates=graph_relation_candidates,
+        graph_structural_prior_initial_strengths=graph_structural_prior_initial_strengths,
+        graph_elastic_structural_prior_initial_strengths=(
+            graph_elastic_structural_prior_initial_strengths
+        ),
+        graph_elastic_structural_prior_component_mask=(
+            graph_elastic_structural_prior_component_mask
+        ),
         classes=classes,
         representative_angles=representative_angles,
         physics_angles_degrees=physics_angles_degrees,

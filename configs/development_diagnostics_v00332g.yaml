@@ -1,0 +1,53 @@
+schema_version: 1
+revision: v00332g-stratified-fixed-budget-mechanism-diagnostics
+status: diagnostic_only_not_a_matched_control_or_production_result
+base_training_config: sage_avo_s01_v0031.yaml
+observability_config: training_observability_v00332d.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+experiment_name: sage_avo_s01_v00332g_development_diagnostics
+
+# Keep v00332f's exact 64 weighted training patches.  Only its invalid
+# validation subset is corrected: it had zero native physics support.
+training_selection_source:
+  revision: v00332f-fixed-budget-mechanism-diagnostics
+  experiment_name: sage_avo_s01_v00332f_development_diagnostics
+  expected_train_patch_count: 64
+  expected_train_indices_sha256: ebd9600d3cc2f5dd1edcc801f5245f7937500cd151365d0fb66f0efa299bf49b
+
+fixed_patch_budget:
+  epochs: 3
+  batch_size: 2
+  train_batches_per_epoch: 32
+  validation_batches_per_epoch: 16
+  repeat_same_train_patches_each_epoch: true
+  validation_selection: stratified_native_physics_multiscale_class1
+
+validation_strata:
+  native_scale: [50, 100]
+  non_native_scales: [[40, 80], [64, 128]]
+  candidate_categories: [background, high_dip, reservoir, high_avo_gradient_change, facies_boundary, high_rgt_change]
+  native_physics_per_category: 2
+  non_native_per_category_per_scale: 1
+  extra_native_class1_patches: 4
+  extra_non_native_class1_patches_per_scale: 2
+  minimum_class1_valid_pixels_per_patch: 50
+
+diagnostic_probes:
+  after_each_completed_epoch: true
+  probe_patch_count: 2
+  deterministic_time: 0.5
+  include_whole_realizations: false
+  flow_integration_steps: 20
+
+objective:
+  auxiliary_graph_smoothness: 0.0
+  graph_objective: no_aux_graph_loss
+  contrastive: 0.0
+  adaptive_task_weighting: false
+  physics_guided_sampling: false
+
+scope:
+  first_mechanism: full_rgt_graph_with_exact_pp
+  change_one_mechanism_per_follow_on_run: true
+  final_controlled_evidence: false

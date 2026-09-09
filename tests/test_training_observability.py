@@ -8,14 +8,20 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 import torch
 
 from sage_avo.diagnostics.accounting import EpochLossObserver
 from sage_avo.diagnostics.checkpoint_analysis import (
+    _cartesian_graph_diagnostic,
     _gradient_diagnostics,
     _graph_attention_details,
 )
 from sage_avo.diagnostics.contracts import build_diagnostic_sample_manifest
+from sage_avo.diagnostics.elastic_strength_sweep import (
+    _inverse_softplus,
+    _raw_strength_matrix,
+)
 from sage_avo.diagnostics.live_logging import BatchProgressLogger
 from sage_avo.models.variants import build_sage_avo_variant
 from sage_avo.training.engine import (
@@ -54,6 +60,29 @@ def _small_batch() -> dict[str, torch.Tensor]:
         "segmentation": torch.zeros(2, 4, 5, dtype=torch.long),
         "physics_eligible": torch.zeros(2, dtype=torch.bool),
     }
+
+
+def test_elastic_strength_sweep_uses_finite_inverse_softplus() -> None:
+    for requested in (0.0, 0.0625, 0.25, 0.5):
+        raw = _inverse_softplus(requested, dtype=torch.float32)
+        assert np.isfinite(raw)
+        realized = torch.nn.functional.softplus(torch.tensor(raw)).item()
+        if requested == 0.0:
+            assert realized <= torch.finfo(torch.float32).tiny
+        else:
+            assert np.isclose(realized, requested, rtol=1e-6, atol=0.0)
+
+
+def test_elastic_strength_sweep_preserves_component_matrix_layout() -> None:
+    requested = ((0.125, 0.0), (0.25, 0.5))
+    raw = _raw_strength_matrix(requested, dtype=torch.float32, device=torch.device("cpu"))
+    realized = torch.nn.functional.softplus(raw)
+    torch.testing.assert_close(
+        realized,
+        torch.tensor(requested),
+        rtol=1e-6,
+        atol=torch.finfo(torch.float32).tiny,
+    )
 
 
 def test_physics_accounting_excludes_inactive_patches_from_conditional_mean() -> None:
@@ -153,6 +182,134 @@ def test_graph_diagnostics_preserve_default_forward_and_optimizer() -> None:
     for before, after in zip(parameters_before, model.parameters()):
         torch.testing.assert_close(before, after, rtol=0, atol=0)
     assert optimizer.state_dict() == optimizer_before
+
+
+@pytest.mark.parametrize("topology", [
+    "rgt_v1_legacy", "rgt_v2_tie_fixed", "rgt_v3_confidence_blocked", "shuffled",
+])
+def test_cartesian_probe_changes_topology_and_restores_forward(topology: str) -> None:
+    torch.manual_seed(12345)
+    model = build_sage_avo_variant(
+        "full", hidden_channels=8, graph_heads=2, max_rgt_shift=1,
+        rgt_topology=topology,
+    ).eval()
+    batch = _small_batch()
+    # A dipping horizon makes RGT and Cartesian neighbors observably different.
+    batch["rgt"] = batch["rgt"] - torch.arange(5, dtype=torch.float32)[None, None, :]
+    state = 0.5 * (batch["low"] + batch["target"])
+    time = torch.full((2,), 0.5)
+    parameters_before = deepcopy(model.state_dict())
+    with torch.no_grad():
+        before = model(state, time, batch["avo"], batch["low"], batch["rgt"])
+        with _cartesian_graph_diagnostic(model.graph):
+            cartesian = model(state, time, batch["avo"], batch["low"], batch["rgt"])
+        after = model(state, time, batch["avo"], batch["low"], batch["rgt"])
+        expected = deepcopy(model)
+        expected.graph.graph_mode = "cartesian"
+        expected.graph.rgt_topology = "cartesian"
+        reference = expected(state, time, batch["avo"], batch["low"], batch["rgt"])
+    assert not torch.equal(before.edge_indices[0], cartesian.edge_indices[0])
+    assert (before.velocity - cartesian.velocity).square().mean().sqrt().item() > 0
+    torch.testing.assert_close(cartesian.velocity, reference.velocity, rtol=0, atol=0)
+    assert torch.equal(cartesian.edge_indices[0], reference.edge_indices[0])
+    assert model.graph.graph_mode == "rgt"
+    assert model.graph.rgt_topology == topology
+    torch.testing.assert_close(before.velocity, after.velocity, rtol=0, atol=0)
+    for name, parameter in model.state_dict().items():
+        torch.testing.assert_close(parameter, parameters_before[name], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("mode", [
+    "relational_rgt", "relational_candidate_rgt", "relational_structural_prior_rgt",
+    "relational_task_decoupled_rgt", "relational_task_specific_rgt",
+    "relational_task_specific_cartesian",
+])
+def test_cartesian_probe_preserves_relational_architecture(mode: str) -> None:
+    model = build_sage_avo_variant(
+        "full", hidden_channels=8, graph_heads=2, max_rgt_shift=1,
+        graph_mode_override=mode.replace("_cartesian", "_rgt"), graph_relation_candidates=2,
+    ).eval()
+    graph = model.graph
+    graph.graph_mode = mode
+    modules_before = {name: id(module) for name, module in graph.named_modules()}
+    expected_mode = "cartesian" if mode == "relational_rgt" else mode.replace("_rgt", "_cartesian")
+    with _cartesian_graph_diagnostic(graph):
+        assert graph.graph_mode == expected_mode
+        assert not hasattr(graph, "rgt_topology")
+        assert graph.relation_candidates == 2
+        assert modules_before == {name: id(module) for name, module in graph.named_modules()}
+    assert graph.graph_mode == mode
+
+
+@pytest.mark.parametrize("mode", ["rgt", "relational_task_specific_rgt"])
+def test_cartesian_probe_restores_selectors_after_exception(mode: str) -> None:
+    model = build_sage_avo_variant(
+        "full", hidden_channels=8, graph_heads=2, graph_mode_override=mode,
+        rgt_topology="rgt_v2_tie_fixed", graph_neighbor_scale=0.0,
+    )
+    graph = model.graph
+    topology_before = getattr(graph, "rgt_topology", None)
+    with pytest.raises(RuntimeError, match="probe failed"):
+        with _cartesian_graph_diagnostic(graph):
+            raise RuntimeError("probe failed")
+    assert graph.graph_mode == mode
+    assert getattr(graph, "rgt_topology", None) == topology_before
+    assert getattr(graph, "graph_neighbor_scale", 0.0) == 0.0
+
+
+def test_relational_graph_diagnostics_separate_tangent_and_normal_attention() -> None:
+    model = build_sage_avo_variant(
+        "full",
+        hidden_channels=8,
+        graph_layers=2,
+        graph_heads=2,
+        max_rgt_shift=1,
+        classes=3,
+        graph_mode_override="relational_rgt",
+    ).eval()
+    batch = _small_batch()
+    state = 0.5 * (batch["low"] + batch["target"])
+    time = torch.full((2,), 0.5)
+    with torch.no_grad():
+        _, details, _, _, _ = _graph_attention_details(model, batch, state, time)
+    assert len(details) == 4
+    assert {(detail["relation"], int(detail["layer"])) for detail in details} == {
+        ("tangential", 1),
+        ("tangential", 2),
+        ("normal", 1),
+        ("normal", 2),
+    }
+    gate = details[0]["relation_gate_mean"]
+    torch.testing.assert_close(gate.sum(), torch.tensor(1.0))
+    assert torch.isfinite(gate).all()
+
+
+def test_task_decoupled_graph_diagnostics_separate_task_streams() -> None:
+    model = build_sage_avo_variant(
+        "full",
+        hidden_channels=8,
+        graph_layers=1,
+        graph_heads=2,
+        max_rgt_shift=1,
+        graph_relation_candidates=2,
+        classes=3,
+        graph_mode_override="relational_task_decoupled_rgt",
+    ).eval()
+    batch = _small_batch()
+    state = 0.5 * (batch["low"] + batch["target"])
+    time = torch.full((2,), 0.5)
+    with torch.no_grad():
+        _, details, _, _, _ = _graph_attention_details(model, batch, state, time)
+
+    assert len(details) == 4
+    assert {(detail["stream"], detail["relation"], int(detail["layer"])) for detail in details} == {
+        ("segmentation", "tangential", 1),
+        ("elastic", "tangential", 1),
+        ("segmentation", "normal", 1),
+        ("elastic", "normal", 1),
+    }
+    for detail in details:
+        torch.testing.assert_close(detail["relation_gate_mean"].sum(), torch.tensor(1.0))
 
 
 def test_gradient_diagnostics_are_finite() -> None:

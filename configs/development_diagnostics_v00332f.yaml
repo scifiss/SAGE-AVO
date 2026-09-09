@@ -1,0 +1,40 @@
+schema_version: 1
+revision: v00332f-fixed-budget-mechanism-diagnostics
+status: diagnostic_only_not_a_matched_control_or_production_result
+base_training_config: sage_avo_s01_v0031.yaml
+observability_config: training_observability_v00332d.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+seed: 12345
+experiment_name: sage_avo_s01_v00332f_development_diagnostics
+
+# This contract deliberately does not alter v00332e.  It is a short,
+# reproducible mechanism-development loop: the same recorded weighted patch
+# draw is repeated each epoch, while the normal augmentation/time streams
+# continue deterministically from the declared seed.
+fixed_patch_budget:
+  epochs: 3
+  batch_size: 2
+  train_batches_per_epoch: 32
+  validation_batches_per_epoch: 8
+  weighted_train_draw: replacement
+  repeat_same_train_patches_each_epoch: true
+  validation_selection: first_sorted_validation_patch_indices
+
+diagnostic_probes:
+  after_each_completed_epoch: true
+  probe_patch_count: 2
+  deterministic_time: 0.5
+  include_whole_realizations: false
+  flow_integration_steps: 20
+
+objective:
+  auxiliary_graph_smoothness: 0.0
+  graph_objective: no_aux_graph_loss
+  contrastive: 0.0
+  adaptive_task_weighting: false
+  physics_guided_sampling: false
+
+scope:
+  first_mechanism: full_rgt_graph_with_exact_pp
+  change_one_mechanism_per_follow_on_run: true
+  final_controlled_evidence: false

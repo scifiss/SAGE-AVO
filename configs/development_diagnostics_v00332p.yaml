@@ -1,0 +1,43 @@
+schema_version: 1
+revision: v00332p-rgt-topology-repair-causal-message-audit
+status: bounded_diagnostic_only_not_production_evidence
+base_training_config: sage_avo_s01_v0031.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+experiment_name: sage_avo_s01_v00332p_rgt_topology_repair
+seeds: [12345, 23456, 34567]
+
+architectures:
+  cartesian_gnn: {rgt_topology: cartesian, neighbor_scale: 1.0}
+  corrected_rgt_gnn: {rgt_topology: rgt_v3_confidence_blocked, neighbor_scale: 1.0}
+  shuffled_graph: {rgt_topology: shuffled, neighbor_scale: 1.0}
+  root_only_gnn: {rgt_topology: rgt_v3_confidence_blocked, neighbor_scale: 0.0}
+
+bounded_training:
+  epochs: 10
+  evaluation_epochs: [1, 3, 5, 10]
+  extension_epoch: 20
+  batch_size: 2
+  train_patches_per_epoch: 70
+  train_selection: one rotating patch per training realization per epoch
+  validation_patches: 40
+  validation_selection: two fixed patches per validation realization
+  sample_steps_validation: 4
+  whole_flow_steps: 4
+  whole_patch_shape: [50, 100]
+  whole_stride: [25, 50]
+  whole_batch_size: 1
+
+objective:
+  auxiliary_graph_smoothness: 0.0
+  graph_objective: no_aux_graph_loss
+  conditional_flow_unchanged: true
+  exact_pp_unchanged: true
+  contrastive: 0.0
+  adaptive_task_weighting: false
+  physics_guided_sampling: false
+
+decision:
+  minimum_seed_count: 3
+  minimum_mean_relative_criterion_gain: 0.001
+  reproducible_favorable_seed_count: 3
+  complex_geology_larger_gain_required_for_complex_only: true
