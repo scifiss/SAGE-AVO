@@ -130,6 +130,7 @@ class InstrumentedTransformerConv(TransformerConv):
     """Behavior-identical TransformerConv with opt-in per-edge message scaling."""
 
     diagnostic_message_scale: Tensor | float | None = None
+    attention_mode: str = "learned"
 
     def message(
         self,
@@ -148,7 +149,15 @@ class InstrumentedTransformerConv(TransformerConv):
             transformed_edge = self.lin_edge(edge_attr).view(-1, self.heads, self.out_channels)
             key_j = key_j + transformed_edge
         alpha = (query_i * key_j).sum(dim=-1) / self.out_channels**0.5
-        alpha = softmax(alpha, index, ptr, size_i)
+        if self.attention_mode == "learned":
+            alpha = softmax(alpha, index, ptr, size_i)
+        elif self.attention_mode == "uniform":
+            # Preserve the value/edge-value/root paths. Query/key parameters
+            # remain instantiated but do not receive gradients through alpha.
+            degree = torch.bincount(index, minlength=size_i or 0).to(alpha.dtype)
+            alpha = torch.ones_like(alpha) / degree[index, None]
+        else:
+            raise ValueError(f"unsupported attention_mode {self.attention_mode!r}")
         self._alpha = alpha
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         out = value_j if transformed_edge is None else value_j + transformed_edge
@@ -161,6 +170,29 @@ class InstrumentedTransformerConv(TransformerConv):
                 scale = scale[:, None, None]
             out = out * scale
         return out
+
+
+def relation_preserving_edge_attr_shuffle(
+    attributes: Tensor, relation_edge_counts: Sequence[int]
+) -> Tensor:
+    """Permute connections within relations, carrying both directions together.
+
+    Each relation is ordered as forward connections followed by their matching
+    reverse connections, as returned by the frozen topology builders.
+    """
+    if sum(relation_edge_counts) != attributes.shape[0]:
+        raise ValueError("relation counts must cover all edge attributes")
+    chunks = []
+    offset = 0
+    for count in relation_edge_counts:
+        if count < 0 or count % 2:
+            raise ValueError("each relation must contain paired directed edges")
+        half = count // 2
+        block = attributes[offset : offset + count]
+        order = torch.roll(torch.arange(half, device=attributes.device), half // 3 + 1)
+        chunks.extend((block[:half][order], block[half:][order]))
+        offset += count
+    return torch.cat(chunks, dim=0) if chunks else attributes.clone()
 
 
 class StratigraphicGraphEncoder(nn.Module):
@@ -177,6 +209,8 @@ class StratigraphicGraphEncoder(nn.Module):
         graph_mode: str = "rgt",
         rgt_topology: str | None = None,
         graph_neighbor_scale: float = 1.0,
+        attention_mode: str = "learned",
+        segmentation_detach_graph: bool = False,
         confidence_normalized_mismatch_threshold: float | None = None,
         confidence_normalized_discontinuity_threshold: float | None = None,
         confidence_dip_residual_threshold: float | None = None,
@@ -195,6 +229,10 @@ class StratigraphicGraphEncoder(nn.Module):
             RGT_V1_LEGACY if graph_mode == "rgt" else "cartesian"
         )
         self.graph_neighbor_scale = float(graph_neighbor_scale)
+        if attention_mode not in {"learned", "uniform"}:
+            raise ValueError("attention_mode must be learned or uniform")
+        self.attention_mode = attention_mode
+        self.segmentation_detach_graph = bool(segmentation_detach_graph)
         self.diagnostic_root_scale = 1.0
         self.diagnostic_neighbor_scale = 1.0
         self.diagnostic_edge_attr_mode = "current"
@@ -276,6 +314,11 @@ class StratigraphicGraphEncoder(nn.Module):
                 edge_attribute = torch.zeros_like(edge_attribute)
             elif self.diagnostic_edge_attr_mode == "shuffled":
                 edge_attribute = edge_attribute.roll(edge_attribute.shape[0] // 3 + 1, dims=0)
+            elif self.diagnostic_edge_attr_mode == "relation_preserving_shuffled":
+                edge_attribute = relation_preserving_edge_attr_shuffle(
+                    edge_attribute,
+                    (tangential_edges[item].shape[1], normal_edges[item].shape[1]),
+                )
             elif self.diagnostic_edge_attr_mode != "current":
                 raise ValueError(
                     f"unsupported diagnostic edge_attr mode {self.diagnostic_edge_attr_mode!r}"
@@ -286,6 +329,7 @@ class StratigraphicGraphEncoder(nn.Module):
             for layer_index, (layer, normalization) in enumerate(
                 zip(self.layers, self.normalizations), start=1
             ):
+                layer.attention_mode = self.attention_mode
                 tangential_scale = self.diagnostic_tangential_message_scale
                 normal_scale = self.diagnostic_normal_message_scale
                 if (
@@ -368,7 +412,7 @@ class StratigraphicGraphEncoder(nn.Module):
         spatial = stacked.reshape(batch, height, width, self.hidden_channels).permute(0, 3, 1, 2)
         return (
             stacked,
-            self.segmentation(spatial),
+            self.segmentation(spatial.detach() if self.segmentation_detach_graph else spatial),
             edges,
             weights,
             attention_edges,
@@ -865,6 +909,8 @@ class SAGEAVO(nn.Module):
         graph_mode: str = "rgt",
         rgt_topology: str | None = None,
         graph_neighbor_scale: float = 1.0,
+        graph_attention_mode: str = "learned",
+        segmentation_detach_graph: bool = False,
         confidence_normalized_mismatch_threshold: float | None = None,
         confidence_normalized_discontinuity_threshold: float | None = None,
         confidence_dip_residual_threshold: float | None = None,
@@ -896,6 +942,10 @@ class SAGEAVO(nn.Module):
         }:
             raise ValueError("unsupported graph_mode")
         self.graph_mode = graph_mode
+        if graph_mode not in {"rgt", "cartesian"} and (
+            graph_attention_mode != "learned" or segmentation_detach_graph
+        ):
+            raise ValueError("v00332r interventions require the single-stream graph encoder")
         self.diagnostic_graph_reinjection_scale = 1.0
         self.diagnostic_capture_fusion = False
         self.last_fusion_diagnostics: dict[str, float] = {}
@@ -980,6 +1030,8 @@ class SAGEAVO(nn.Module):
                 graph_mode=graph_mode,
                 rgt_topology=rgt_topology,
                 graph_neighbor_scale=graph_neighbor_scale,
+                attention_mode=graph_attention_mode,
+                segmentation_detach_graph=segmentation_detach_graph,
                 confidence_normalized_mismatch_threshold=(
                     confidence_normalized_mismatch_threshold
                 ),

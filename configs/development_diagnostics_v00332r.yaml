@@ -1,0 +1,62 @@
+schema_version: 1
+revision: v00332r-attention-seg-coupling
+status: bounded_causal_experiment_not_production
+review_commit: b594dd9cd2afe8f8bb880a1932ab1cb096dfda8d
+experiment_name: sage_avo_s01_v00332r_attention_seg_coupling
+seeds: [12345, 23456, 34567]
+milestones: [1, 3, 5, 10, 15, 20]
+base_training_config: sage_avo_s01_v0031.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+conditions:
+  RGT_TRANSFORMER_SHARED:
+    rgt_topology: rgt_v3_confidence_blocked
+    attention_mode: learned
+    segmentation_detach_graph: false
+  RGT_UNIFORM_SHARED:
+    rgt_topology: rgt_v3_confidence_blocked
+    attention_mode: uniform
+    segmentation_detach_graph: false
+  RGT_TRANSFORMER_SEG_GRAD_DECOUPLED:
+    rgt_topology: rgt_v3_confidence_blocked
+    attention_mode: learned
+    segmentation_detach_graph: true
+  CARTESIAN_TRANSFORMER_SHARED:
+    rgt_topology: cartesian
+    attention_mode: learned
+    segmentation_detach_graph: false
+bounded_training:
+  epochs: 20
+  batch_size: 2
+  scheduler_T_max: 20
+  scheduler_eta_min: 0.000001
+  patch_schedule: exact_frozen_v00332q
+  sample_steps_validation: 4
+  whole_flow_steps: 4
+  whole_patch_shape: [50, 100]
+  whole_stride: [25, 50]
+  whole_batch_size: 1
+diagnostics:
+  time: 0.5
+  headwise_probe_patches: 6
+  gradient_probe_batches: 6
+  probe_batch_size: 1
+  frozen_inference_milestones: [1, 3, 5, 10, 15, 20]
+  frozen_whole_inference_epochs: [20]
+  frozen_whole_inference_scope: same_six_v00332q_validation_realizations
+decision_thresholds:
+  # Operational, predeclared thresholds, not significance tests or fitted cutoffs.
+  parity_negligible_fraction: 0.0001
+  parity_material_fraction: 0.001
+  material_relative_elastic_effect: 0.01
+  attention_equivalence_relative_margin: 0.005
+  major_relative_density_degradation: 0.01
+  gradient_orthogonal_cosine: 0.05
+  gradient_severe_conflict_cosine: -0.3
+  required_favorable_seeds: 3
+invariants:
+  topology_source_unchanged: true
+  confidence_rule: frozen_v00332p_inherited_by_v00332q
+  no_new_losses: true
+  no_q_training_state_loaded: true
+  no_q_artifact_writes: true
+  no_auto_commit_push: true

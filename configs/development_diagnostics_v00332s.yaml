@@ -1,0 +1,39 @@
+schema_version: 1
+revision: v00332s-structural-applicability-screen
+experiment_name: sage_avo_s01_v00332s_adaptive_rgt_applicability
+review_commit: b594dd9cd2afe8f8bb880a1932ab1cb096dfda8d
+seeds: [12345, 23456, 34567]
+milestones: [1, 3, 5, 10, 15, 20]
+primary_epoch: 20
+score:
+  max_shift: 3
+  local_scale: median_five_absolute_forward_vertical_increments_nearest_boundary
+  epsilon: 16_float32_eps_times_section_median_positive_vertical_increment
+  undefined_local_scale: exclude_from_signal_and_never_select_RGT
+  bins: nonpositive_then_positive_training_tertiles
+  proposed_material_sample_fraction: 0.5
+phase2_screen:
+  primary_scope: confidence_safe_valid_source_and_both_targets_identifiable_scale
+  minimum_pixels_per_bin_per_realization: 50
+  minimum_paired_realizations: 4
+  require_high_S_positive_mean_elastic_gain_all_three_seeds: true
+  require_high_S_minus_zero_S_positive_all_three_seeds: true
+  minimum_mean_relative_gain_separation: 0.005
+  comparison: mean_of_three_normalized_property_RMSEs_equal_weight_paired_realizations
+  confidence_thresholds: frozen_v00332p_q_r_no_retuning
+  primary_predictions: frozen_v00332r_epoch20_RGT_TRANSFORMER_SHARED_vs_CARTESIAN_TRANSFORMER_SHARED
+  repeated_q_outputs: reproducibility_check_only_not_independent_replications
+  dip_comparison: training_quartile_bins_leave_one_realization_out_error_gain_prediction
+  fail_action: stop_no_adaptive_implementation_or_training
+training_authorization:
+  requires_phase2_signal_present: true
+  epochs: 20
+  scheduler_T_max: 20
+  scheduler_eta_min: 0.000001
+  schedule: exact_v00332r
+  conditions: [CARTESIAN_TRANSFORMER, FULL_RGT_TRANSFORMER, ADAPTIVE_RGT_TRANSFORMER, RANDOM_MATCHED_HYBRID]
+invariants:
+  no_changes_to_transformer_attention_or_segmentation: true
+  no_new_losses_or_features: true
+  no_q_r_artifact_writes: true
+  no_commit_push_or_production_training: true

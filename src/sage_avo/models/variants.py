@@ -101,6 +101,8 @@ def sage_avo_model_kwargs(config: dict[str, Any]) -> dict[str, Any]:
         "graph_mode_override": experimental_graph.get("mode"),
         "rgt_topology": experimental_graph.get("rgt_topology"),
         "graph_neighbor_scale": float(experimental_graph.get("neighbor_scale", 1.0)),
+        "graph_attention_mode": str(experimental_graph.get("attention_mode", "learned")),
+        "segmentation_detach_graph": bool(experimental_graph.get("segmentation_detach_graph", False)),
         "confidence_normalized_mismatch_threshold": experimental_graph.get(
             "confidence_normalized_mismatch_threshold"
         ),
@@ -168,6 +170,8 @@ def build_sage_avo_variant(
     graph_mode_override: str | None = None,
     rgt_topology: str | None = None,
     graph_neighbor_scale: float = 1.0,
+    graph_attention_mode: str = "learned",
+    segmentation_detach_graph: bool = False,
     confidence_normalized_mismatch_threshold: float | None = None,
     confidence_normalized_discontinuity_threshold: float | None = None,
     confidence_dip_residual_threshold: float | None = None,
@@ -202,6 +206,8 @@ def build_sage_avo_variant(
         graph_mode=graph_mode_override or definition.graph_mode,
         rgt_topology=rgt_topology,
         graph_neighbor_scale=graph_neighbor_scale,
+        graph_attention_mode=graph_attention_mode,
+        segmentation_detach_graph=segmentation_detach_graph,
         confidence_normalized_mismatch_threshold=(
             confidence_normalized_mismatch_threshold
         ),
