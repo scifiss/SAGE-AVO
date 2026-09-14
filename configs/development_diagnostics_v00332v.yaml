@@ -1,0 +1,35 @@
+revision: v00332v-rgt-flattened-reflector-components
+experiment_name: sage_avo_s01_v00332v_flattened_component_graph_corrected
+tau_samples: 301
+ridge_quantile: 0.70
+ridge_minimum_distance: 5
+ridge_prominence_fraction: 0.08
+maximum_candidates_per_trace: 24
+maximum_flattened_jump_samples: 2.5
+minimum_waveform_cosine: 0.80
+minimum_phase_cosine: 0.50
+minimum_strength_ratio: 0.20
+waveform_radius: 2
+minimum_component_trace_span: 12
+minimum_component_points: 8
+node_spacing_traces: 1
+edge_spans_traces: [4, 8, 16, 32, 64]
+normal_offset_samples: 1.5
+decision:
+  maximum_roundtrip_tau_steps_p99: 0.10
+  maximum_roundtrip_time_samples_p99: 0.25
+  minimum_component_coverage: 0.20
+  minimum_node_fraction: 0.005
+  maximum_node_fraction: 0.020
+  maximum_small_component_fraction: 0.50
+  minimum_median_component_span: 16
+  maximum_fault_crossing_rate: 0.02
+  minimum_fault_split_recall: 0.90
+  minimum_high_dip_retention: 0.70
+  minimum_two_hop_reach: 12.0
+invariants:
+  no_training: true
+  no_checkpoint_load: true
+  cnn_coherence_gate: false
+  fault_truth_qc_only: true
+  no_production_source_changes: true
