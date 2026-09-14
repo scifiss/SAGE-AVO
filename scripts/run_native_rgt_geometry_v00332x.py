@@ -177,14 +177,18 @@ def choose_discovery(calibration: list[dict[str, Any]]) -> tuple[int, float, lis
             )
             aggregate.append(record)
     stable = [row for row in aggregate if row["stable"]]
-    if not stable:
-        return 0, 0.0, aggregate
-    # Observable-only choice: maximize reflector-strength improvement, then use
-    # the cheaper grid and narrower search for deterministic ties.
+    # If no setting meets the stability gate, retain the least-displaced setting
+    # for diagnostic validation while keeping RIDGE_REFINEMENT_STATUS=FAIL. This
+    # completes fault/graph QC without making the graph eligible for training.
+    pool = stable or aggregate
     selected = min(
-        stable,
+        pool,
         key=lambda row: (
-            -row["median_relative_strength_gain"],
+            0 if row["stable"] else 1,
+            row["worst_ridge_time_displacement_p99"]
+            if not row["stable"]
+            else -row["median_relative_strength_gain"],
+            row["maximum_refinement_boundary_fraction"],
             row["discovery_resolution"],
             row["refinement_width_steps"],
         ),
@@ -476,23 +480,6 @@ def main() -> None:
     resolution, width, aggregate = choose_discovery(calibration)
     u.csv_file("calibration_grid.csv", calibration)
     u.csv_file("calibration_choice.csv", aggregate)
-
-    if not resolution:
-        summary = {
-            "decision": "RIDGE_REFINEMENT_UNSTABLE",
-            "native_geometry_status": "ACCURATE",
-            "ridge_refinement_status": "FAIL",
-            "fault_split_status": "FAIL",
-            "long_edge_fault_status": "FAIL",
-            "high_dip_retention": "FAIL",
-            "training_performed": False,
-        }
-        u.json_file("v00332x_summary.json", summary)
-        u.write(
-            OUT / "v00332x_native_rgt_component_graph_report.md",
-            b"# v00332x\n\nDecision: **RIDGE_REFINEMENT_UNSTABLE**.\n",
-        )
-        return
 
     u.log(f"frozen discovery choice: grid={resolution}, width={width}")
     training_links = []
