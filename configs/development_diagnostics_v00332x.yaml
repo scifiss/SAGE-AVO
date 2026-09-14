@@ -1,0 +1,37 @@
+revision: v00332x-native-rgt-geometry
+experiment_name: sage_avo_s01_v00332x_native_rgt_component_graph
+calibration_training_count: 6
+discovery_resolutions: [301, 601]
+refinement_width_steps: [0.5, 1.0, 2.0]
+refinement_samples: 17
+ridge_quantile: 0.70
+ridge_minimum_distance: 5
+ridge_prominence_fraction: 0.08
+maximum_candidates_per_trace: 24
+maximum_flattened_jump_samples: 2.5
+minimum_waveform_cosine: 0.80
+minimum_phase_cosine: 0.50
+minimum_strength_ratio: 0.20
+waveform_radius: 2
+maximum_refined_tau_steps: 3.0
+minimum_original_waveform_cosine_floor: 0.50
+minimum_original_phase_cosine_floor: 0.20
+minimum_strength_ratio_floor: 0.20
+barrier_robust_sigma: 6.0
+barrier_quantile_cap: 0.99
+minimum_component_trace_span: 12
+minimum_component_points: 8
+edge_spans_traces: [4, 8, 16, 32, 64]
+decision:
+  maximum_native_time_error: 1.0e-8
+  maximum_native_tau_error: 1.0e-8
+  maximum_refinement_time_p99: 3.0
+  maximum_refinement_boundary_fraction: 0.50
+  minimum_fault_split_recall: 0.90
+  maximum_adjacent_fault_crossing: 0.02
+  maximum_long_fault_crossing: 0.02
+  minimum_high_dip_retention: 0.80
+  minimum_curved_retention: 0.80
+  maximum_small_component_fraction: 0.50
+  maximum_node_fraction: 0.02
+  minimum_two_hop_reach: 12.0
