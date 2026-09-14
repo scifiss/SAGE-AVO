@@ -1,0 +1,15 @@
+revision: v00332w-dual-domain-fault-barrier
+experiment_name: sage_avo_s01_v00332w_flattening_resolution_audit
+training_qc_count: 6
+resolutions: [301, 601, 1201, 2401, 4801, 9601, 19201]
+target_time_error_p99_samples: 0.25
+selection_rule: lowest_resolution_passing_every_training_qc_realization
+validation_fault_analysis_requires_resolution_pass: true
+invariants:
+  training_split_calibration_only: true
+  no_fault_truth_for_resolution_selection: true
+  no_validation_access_before_resolution_freeze: true
+  no_training: true
+  no_checkpoint_load: true
+  no_commit: true
+  no_push: true
