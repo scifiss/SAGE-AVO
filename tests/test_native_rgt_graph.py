@@ -128,3 +128,29 @@ def test_threshold_freezing_uses_only_observable_reciprocal_links():
     assert thresholds["shift_jump"] <= 1.0
     assert thresholds["original_waveform_cosine"] >= 0.5
     assert thresholds["high_shift_magnitude"] > 1.0
+
+
+def test_zero_inflated_shift_distribution_does_not_create_epsilon_barrier():
+    values = [0.0] * 95 + [0.25, 0.5, 0.75, 1.0, 4.0]
+    rows = [
+        {
+            "reciprocal": True,
+            "shift_jump": value,
+            "shift_second_difference": value,
+            "original_waveform_cosine": 0.9,
+            "original_phase_cosine": 0.8,
+            "strength_ratio": 0.7,
+            "physical_shift": 1.0,
+        }
+        for value in values
+    ]
+    config = {
+        "barrier_robust_sigma": 6.0,
+        "barrier_quantile_cap": 0.99,
+        "minimum_original_waveform_cosine_floor": 0.5,
+        "minimum_original_phase_cosine_floor": 0.2,
+        "minimum_strength_ratio_floor": 0.2,
+    }
+    thresholds = freeze_thresholds(rows, config)
+    assert thresholds["shift_jump"] >= np.quantile(values, 0.95)
+    assert thresholds["shift_jump"] <= np.quantile(values, 0.99)

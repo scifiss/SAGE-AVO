@@ -616,6 +616,26 @@ def main() -> None:
         decision = "COMPONENTS_TOO_FRAGMENTED"
     else:
         decision = "NATIVE_RGT_COMPONENT_GRAPH_PROMISING"
+    aggregate_validation = {
+        "fault_split_recall_fault_bearing_mean": float(fault_sections.fault_split_recall.mean()),
+        "retained_adjacent_fault_crossing_rate_fault_bearing_mean": float(
+            fault_sections.retained_adjacent_fault_crossing_rate.mean()
+        ),
+        "final_long_edge_fault_crossing_rate_fault_bearing_mean": float(
+            fault_sections.final_long_edge_fault_crossing_rate.mean()
+        ),
+        **{
+            column: float(fault_frame[column].mean())
+            for column in [
+                "high_dip_retention",
+                "curved_reflector_retention",
+                "shift_structural_high_dip_agreement",
+                "small_component_fraction",
+                "node_fraction",
+                "two_hop_reach_mean",
+            ]
+        },
+    }
     summary = {
         "decision": decision,
         "native_geometry_status": "ACCURATE" if native_ok else "FAIL",
@@ -630,20 +650,7 @@ def main() -> None:
         "frozen_thresholds": thresholds,
         "training_ready": decision == "NATIVE_RGT_COMPONENT_GRAPH_PROMISING",
         "training_performed": False,
-        "aggregate_validation": {
-            column: float(fault_frame[column].mean())
-            for column in [
-                "fault_split_recall",
-                "retained_adjacent_fault_crossing_rate",
-                "final_long_edge_fault_crossing_rate",
-                "high_dip_retention",
-                "curved_reflector_retention",
-                "shift_structural_high_dip_agreement",
-                "small_component_fraction",
-                "node_fraction",
-                "two_hop_reach_mean",
-            ]
-        },
+        "aggregate_validation": aggregate_validation,
     }
     u.json_file("v00332x_summary.json", summary)
     report = f"""# v00332x — native-RGT geometry and coarse flattened discovery

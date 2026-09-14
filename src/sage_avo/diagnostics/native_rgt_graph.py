@@ -240,7 +240,13 @@ def freeze_thresholds(rows: list[dict[str, Any]], config: Mapping[str, Any]) -> 
         median = np.median(values)
         mad = 1.4826 * np.median(np.abs(values - median))
         robust_limit = median + config["barrier_robust_sigma"] * max(mad, 1e-8)
-        return float(min(np.quantile(values, config["barrier_quantile_cap"]), robust_limit))
+        # A zero-inflated shift distribution can have median=MAD=0 despite a
+        # legitimate smooth nonzero tail. Never let that degeneracy turn
+        # floating-point noise into a geological barrier: retain at least the
+        # observable 95th percentile while retaining the declared upper cap.
+        lower_quantile = np.quantile(values, 0.95)
+        upper_quantile = np.quantile(values, config["barrier_quantile_cap"])
+        return float(max(lower_quantile, min(upper_quantile, robust_limit)))
 
     def robust_low(name: str, floor: float) -> float:
         values = np.asarray([row[name] for row in reciprocal], dtype=float)
