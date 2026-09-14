@@ -1,0 +1,34 @@
+revision: v00332u-sparse-stratigraphic-skeleton
+experiment_name: sage_avo_s01_v00332u_sparse_skeleton
+status: topology_only_no_training
+node_spacing: 4
+range_multipliers: [1, 2, 4, 8, 16]
+level_samples: 240
+max_interfaces: 16
+minimum_level_separation: 8
+minimum_surface_coverage: 0.3
+maximum_step_samples: 12.0
+maximum_shift_residual_samples: 4.0
+maximum_dip_residual_samples: 4.0
+maximum_reciprocal_error_samples: 0.1
+sigma_tau_steps: 1.0
+sigma_gradient_steps: 4.0
+attention_lambda: 1.0
+attention_epsilon: 1.0e-12
+decision:
+  maximum_node_fraction: 0.10
+  minimum_nonlocal_fraction: 0.50
+  minimum_two_hop_reach_ratio: 2.0
+  minimum_safe_retention: 0.50
+  minimum_high_dip_safe_retention: 0.50
+  minimum_fault_crossing_reduction: 0.50
+  maximum_retained_fault_crossing_fraction: 0.02
+  maximum_normalized_mismatch_p95: 0.10
+  minimum_long_edge_fraction: 0.10
+  minimum_tangential_prior_median: 0.05
+invariants:
+  no_training: true
+  no_model_or_checkpoint_load: true
+  no_production_source_changes: true
+  fault_truth_qc_only: true
+  no_threshold_tuning_to_validation: true

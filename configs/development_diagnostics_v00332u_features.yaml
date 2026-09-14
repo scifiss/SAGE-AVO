@@ -1,0 +1,46 @@
+revision: v00332u-authorized-frozen-cnn-path-qc
+experiment_name: sage_avo_s01_v00332u_cnn_path_completion
+checkpoint_seed: 12345
+checkpoint_epoch: 20
+flow_time: 0.0
+flow_state: normalized_low_frequency_prior
+strong_reflector_quantile: 0.75
+weak_reflector_quantile: 0.25
+near_different_interface_radius: 12.0
+snapping:
+  normal_radius_samples: 2.0
+  normal_step_samples: 0.25
+  rgt_tolerance_reference_steps: 0.75
+  maximum_interface_gap_fraction: 0.24
+  minimum_gradient_direction_cosine: 0.9
+  maximum_gradient_norm_ratio: 4.0
+path_prior:
+  sigma_mean_rgt_reference_steps: 0.5
+  sigma_local_tangent_cosine: 0.2
+path_observables:
+  normal_waveform_radius: 3
+  minimum_path_coherence_p10: 0.8
+  minimum_reflector_continuity_ratio: 0.25
+  maximum_shift_median_residual: 2.0
+filter_order: [BASELINE, COHERENCE, CONTINUITY, COMBINED]
+training_gate:
+  minimum_supported_anchor_fraction: 0.75
+  minimum_long_same_cosine: 0.5
+  minimum_long_minus_near_different_cosine: 0.05
+  minimum_favorable_feature_sections: 5
+  minimum_high_confidence_path_fraction: 0.9
+  high_confidence_path_prior: 0.5
+  minimum_fault_crossing_recall: 0.9
+  maximum_retained_crossing_rate_per_fault_section: 0.02
+  minimum_steep_safe_retention: 0.9
+  minimum_curved_long_safe_retention: 0.9
+  minimum_reach_ratio: 2.0
+  maximum_node_fraction: 0.02
+policy:
+  thresholds: fixed_before_measurements_not_fitted_to_fault_labels_or_inversion
+  filter_selection: first_qualifying_predeclared_filter_descriptive_only_not_adopted
+  checkpoint_inference: explicitly_authorized_CNN_only
+  training: forbidden
+  optimizer: forbidden
+  backward: forbidden
+  node_or_topology_adoption: forbidden
