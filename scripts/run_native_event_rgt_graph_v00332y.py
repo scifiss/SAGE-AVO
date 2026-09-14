@@ -663,9 +663,11 @@ def main() -> None:
     association_ok = bool(
         (qc.matched_event_fraction >= decision_config["minimum_matched_event_fraction"]).all()
     )
-    fault_cases = qc[qc.fault_candidate_links > 0]
+    fault_case_ids = q_contract["diverse_validation_subset"]["fault_rich_ids"]
+    fault_cases = qc[qc.realization_id.isin(fault_case_ids)]
     fault_ok = bool(
         len(fault_cases)
+        and (fault_cases.fault_candidate_links > 0).all()
         and (fault_cases.fault_split_recall >= decision_config["minimum_fault_split_recall"]).all()
         and (
             fault_cases.retained_adjacent_crossing_rate
@@ -679,9 +681,11 @@ def main() -> None:
             <= decision_config["maximum_long_fault_crossing"]
         ).all()
     )
-    high_cases = qc[qc.high_dip_candidates > 0]
+    high_case_ids = q_contract["diverse_validation_subset"]["high_dip_continuous_ids"]
+    high_cases = qc[qc.realization_id.isin(high_case_ids)]
     high_ok = bool(
         len(high_cases)
+        and (high_cases.high_dip_candidates > 0).all()
         and (high_cases.high_dip_retention >= decision_config["minimum_high_dip_retention"]).all()
     )
     curved_cases = qc[qc.curved_candidates > 0]
@@ -734,12 +738,14 @@ def main() -> None:
         {
             "metric": "fault_split_recall",
             "v00332x": x_summary["aggregate_validation"]["fault_split_recall_fault_bearing_mean"],
-            "v00332y": float(fault_cases.fault_split_recall.mean()),
+            "v00332y": float(
+                fault_cases[fault_cases.fault_candidate_links > 0].fault_split_recall.mean()
+            ),
         },
         {
             "metric": "high_dip_retention",
             "v00332x": x_summary["aggregate_validation"]["high_dip_retention"],
-            "v00332y": float(qc.high_dip_retention.mean()),
+            "v00332y": float(high_cases.high_dip_retention.mean()),
         },
         {
             "metric": "two_hop_reach",
@@ -753,15 +759,20 @@ def main() -> None:
         },
     ]
     u.csv_file("v00332x_vs_v00332y.csv", comparison)
+    measurable_fault_cases = fault_cases[fault_cases.fault_candidate_links > 0]
     aggregate = {
         "event_repeatability_mean": float(qc.repeatability.mean()),
         "event_repeatability_error_p95_worst": float(qc.error_p95.max()),
         "matched_event_fraction_mean": float(qc.matched_event_fraction.mean()),
-        "fault_split_recall_fault_bearing_mean": float(fault_cases.fault_split_recall.mean()),
-        "long_edge_fault_crossing_fault_bearing_mean": float(
+        "fault_split_recall_evaluable_mean": float(
+            measurable_fault_cases.fault_split_recall.mean()
+        ),
+        "fault_split_evaluable_case_count": int(len(measurable_fault_cases)),
+        "fault_split_designated_case_count": int(len(fault_cases)),
+        "long_edge_fault_crossing_designated_mean": float(
             fault_cases.long_edge_fault_crossing_rate.mean()
         ),
-        "high_dip_retention_mean": float(qc.high_dip_retention.mean()),
+        "high_dip_retention_designated_mean": float(high_cases.high_dip_retention.mean()),
         "curved_retention_mean": float(qc.curved_retention.mean()),
         "node_fraction_mean": float(qc.node_fraction.mean()),
         "two_hop_reach_mean": float(qc.two_hop_reach_mean.mean()),

@@ -80,6 +80,14 @@ def test_angle_subset_event_localization_is_repeatable():
     assert result["error_p95"] < 0.5
 
 
+def test_missing_event_reduces_repeatability_without_corrupting_localization_error():
+    reference = [{"trace": 0, "time": 10.0}, {"trace": 0, "time": 20.0}]
+    comparison = [{"trace": 0, "time": 10.1}]
+    result = event_repeatability(reference, comparison, tolerance=0.5)
+    assert result["repeatability"] == 0.75
+    np.testing.assert_allclose(result["error_p95"], 0.1, atol=1e-12)
+
+
 def test_native_rgt_prediction_produces_reciprocal_event_association():
     tau, avo, valid, _ = synthetic()
     events = detect_physical_events(avo, tau, valid, detector_config())

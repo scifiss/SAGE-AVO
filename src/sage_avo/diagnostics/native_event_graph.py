@@ -142,8 +142,8 @@ def event_repeatability(
         candidates = by_trace.get(int(event["trace"]), [])
         if candidates:
             errors.append(min(abs(float(event["time"]) - value) for value in candidates))
-    matched = sum(error <= tolerance for error in errors)
-    forward_fraction = matched / max(len(reference), 1)
+    matched_errors = [error for error in errors if error <= tolerance]
+    forward_fraction = len(matched_errors) / max(len(reference), 1)
     by_reference: dict[int, list[float]] = {}
     for event in reference:
         by_reference.setdefault(int(event["trace"]), []).append(float(event["time"]))
@@ -155,8 +155,10 @@ def event_repeatability(
     reverse_fraction = sum(error <= tolerance for error in reverse_errors) / max(len(comparison), 1)
     return {
         "repeatability": float(0.5 * (forward_fraction + reverse_fraction)),
-        "error_p50": float(np.quantile(errors, 0.50)) if errors else float("inf"),
-        "error_p95": float(np.quantile(errors, 0.95)) if errors else float("inf"),
+        # Localization error and missing-event repeatability are distinct. Do
+        # not turn a missing event into an artificial multi-sample position error.
+        "error_p50": float(np.quantile(matched_errors, 0.50)) if matched_errors else float("inf"),
+        "error_p95": float(np.quantile(matched_errors, 0.95)) if matched_errors else float("inf"),
         "reference_count": len(reference),
         "comparison_count": len(comparison),
     }
