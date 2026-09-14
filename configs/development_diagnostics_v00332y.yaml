@@ -1,0 +1,50 @@
+revision: v00332y-native-event-rgt-graph
+experiment_name: sage_avo_s01_v00332y_native_event_rgt_graph
+calibration_training_count: 6
+event_detector_candidates:
+  - {name: q65_d3, event_quantile: 0.65, minimum_distance: 3}
+  - {name: q70_d4, event_quantile: 0.70, minimum_distance: 4}
+  - {name: q75_d5, event_quantile: 0.75, minimum_distance: 5}
+event_prominence_fraction: 0.06
+event_refinement_radius: 2
+event_waveform_radius: 2
+minimum_phase_concentration: 0.35
+maximum_events_per_trace: 28
+repeatability_channels: [0, 2]
+repeatability_tolerance_samples: 1.0
+search_radius_candidates: [2.0, 4.0, 6.0]
+match_weightings:
+  - name: equal
+    weights: {tau: 1.0, time: 1.0, waveform: 1.0, phase: 1.0, ava: 1.0}
+  - name: geometry_balanced
+    weights: {tau: 1.5, time: 1.5, waveform: 1.0, phase: 1.0, ava: 0.5}
+  - name: seismic_balanced
+    weights: {tau: 1.0, time: 1.0, waveform: 1.5, phase: 1.5, ava: 0.5}
+maximum_normalized_match_cost: 6.0
+minimum_match_waveform_cosine: 0.30
+minimum_match_phase_cosine: 0.10
+minimum_match_ava_cosine: 0.10
+barrier_robust_sigma: 6.0
+barrier_quantile_cap: 0.99
+minimum_barrier_waveform_cosine: 0.50
+minimum_barrier_phase_cosine: 0.20
+minimum_barrier_ava_cosine: 0.20
+minimum_component_trace_span: 12
+minimum_component_points: 8
+node_spacing_candidates: [2, 4, 8]
+edge_spans_traces: [4, 8, 16, 32, 64]
+normal_offset_samples: 1.5
+decision:
+  minimum_event_repeatability: 0.80
+  maximum_repeatability_error_p95_samples: 1.0
+  minimum_matched_event_fraction: 0.20
+  minimum_fault_split_recall: 0.90
+  maximum_adjacent_fault_crossing: 0.02
+  maximum_long_fault_crossing: 0.02
+  minimum_high_dip_retention: 0.80
+  minimum_curved_retention: 0.80
+  minimum_component_span_stability: 0.70
+  maximum_small_component_fraction: 0.50
+  minimum_node_fraction: 0.0067
+  maximum_node_fraction: 0.02
+  minimum_two_hop_reach: 12.0
