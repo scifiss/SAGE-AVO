@@ -1,5 +1,11 @@
 # SAGE-AVO
 
+For independent NumPy applications, the pre-1.0 `sage_avo.api` facade exposes
+selected scientific operators without training infrastructure. See the
+[public API contracts](docs/SAGE_AVO_PUBLIC_API.md) and
+[eligibility matrix](docs/SAGE_AVO_API_ELIGIBILITY.md). This API does not
+promote the ongoing RGT/GNN experiments or imply field validation.
+
 **Structure-aware, physics-regularized refinement of low-frequency elastic priors from three-band AVO data.**
 
 [![CI](https://github.com/scifiss/SAGE-AVO/actions/workflows/ci.yml/badge.svg)](https://github.com/scifiss/SAGE-AVO/actions/workflows/ci.yml)

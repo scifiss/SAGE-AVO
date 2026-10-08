@@ -1,0 +1,103 @@
+{
+  "api_schema_version": "0.1.0",
+  "operations": [
+    {
+      "identifier": "make_coherent_deformation", "operator_version": "synthetic-deformation-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Generate one seeded fold/fault displacement map, not field-conditioned geology.",
+      "input_contract": "shape=(time_samples,traces), seed=integer; optional existing generator parameters in sample/trace units",
+      "output_contract": "Deformation with vertical/horizontal [time,trace] displacements in samples and metadata",
+      "dependencies": ["numpy", "scipy"], "calibration_or_data": "none", "applicability": "synthetic deformation only; fault metadata is not a field interpretation",
+      "determinism": "same seed and inputs reproduce maps", "resources": "CPU, O(time*trace)", "implementation": "sage_avo.geology.synthetic.make_deformation"
+    },
+    {
+      "identifier": "warp_geological_arrays", "operator_version": "shared-warp-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Apply one displacement map coherently to related arrays.",
+      "input_contract": "mapping of [time,trace] or [channel,time,trace] arrays; Deformation; explicit categorical keys",
+      "output_contract": "new mapping, same keys/shapes; nearest boundary extrapolation; categorical order 0, continuous order 1",
+      "dependencies": ["numpy", "scipy"], "calibration_or_data": "none", "applicability": "coordinate warp only; no elastic/fluid modeling or physical-bound enforcement",
+      "determinism": "deterministic for supplied deformation", "resources": "CPU, proportional to array pixels", "implementation": "sage_avo.geology.synthetic.warp_with_deformation"
+    },
+    {
+      "identifier": "elastic_moduli", "operator_version": "elastic-gpa-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Convert isotropic Vp/Vs/density to saturated bulk/shear moduli.",
+      "input_contract": "matching finite arrays; Vp,Vs m/s; density g/cc; Vp>Vs>0",
+      "output_contract": "tuple(K,G), matching shape, GPa float64", "dependencies": ["numpy"], "calibration_or_data": "none",
+      "applicability": "isotropic elastic states, positive bulk modulus", "determinism": "deterministic", "resources": "CPU, O(pixels)", "implementation": "sage_avo.geology.rock_physics.elastic_moduli_gpa"
+    },
+    {
+      "identifier": "elastic_from_moduli", "operator_version": "elastic-strict-inverse-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Convert positive isotropic bulk/shear moduli and density to velocities.",
+      "input_contract": "matching finite arrays; K,G GPa; density g/cc; all positive",
+      "output_contract": "ElasticProperties Vp,Vs m/s and density g/cc, matching shape, float64", "dependencies": ["numpy"], "calibration_or_data": "none",
+      "applicability": "rejects invalid states; no clipping", "determinism": "deterministic", "resources": "CPU, O(pixels)", "implementation": "sage_avo.geology.fluid_calibration.elastic_from_gpa_strict"
+    },
+    {
+      "identifier": "brine_fluid_state", "operator_version": "batzle-wang-1992", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Evaluate NaCl-brine density, acoustic velocity, and bulk modulus.",
+      "input_contract": "pressure MPa [5,60], temperature degC [20,100], NaCl mass fraction [0,0.32]",
+      "output_contract": "FluidPropertyState: density g/cc, velocity m/s, K GPa, phase/model provenance", "dependencies": ["numpy"], "calibration_or_data": "none",
+      "applicability": "empirical correlation support only; no extrapolation", "determinism": "deterministic", "resources": "CPU scalar", "implementation": "sage_avo.geology.fluid_properties.batzle_wang_brine"
+    },
+    {
+      "identifier": "co2_fluid_state", "operator_version": "coolprop-span-wagner-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Evaluate a supported pure-CO2 single-phase state.",
+      "input_contract": "pressure MPa, temperature degC; supercritical required by default",
+      "output_contract": "FluidPropertyState: density g/cc, velocity m/s, K GPa, phase/model version", "dependencies": ["CoolProp>=7.1,<8"], "calibration_or_data": "none",
+      "applicability": "CoolProp fluid limits; reject two-phase/unknown/critical states", "determinism": "deterministic for a pinned CoolProp version", "resources": "CPU scalar", "implementation": "sage_avo.geology.fluid_properties.span_wagner_co2"
+    },
+    {
+      "identifier": "exact_pp_reflectivity", "operator_version": "numpy-zoeppritz-matrix-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Exact PP interface reflectivity, not convolved seismic.",
+      "input_contract": "matching finite Vp,Vs m/s and density g/cc [time,trace]; increasing angles deg within [0,55]; pre-critical only",
+      "output_contract": "float64 [angle,time,trace], first time sample zero, dimensionless coefficients", "dependencies": ["numpy"], "calibration_or_data": "none",
+      "applicability": "isotropic elastic interfaces; post-critical real-part-only workflow is rejected at facade boundary", "determinism": "deterministic", "resources": "CPU, dense 4x4 solve per interface and angle", "implementation": "sage_avo.forward.zoeppritz.reflectivity_gather"
+    },
+    {
+      "identifier": "simulate_three_band_avo", "operator_version": "forward-model-spec-v003-numpy", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Exact PP reflectivity, angle-specific wavelet convolution, global-sample mute, shared-endpoint near/mid/far stacks.",
+      "input_contract": "matching finite elastic [time,trace] with Vp,Vs m/s and density g/cc; ForwardModelSpecification; nonnegative global sample_origin",
+      "output_contract": "ForwardResult: float32 reflectivity/seismic [angle,time,trace], stacks [3,time,trace], angles deg and ordered band names",
+      "dependencies": ["numpy", "scipy"], "calibration_or_data": "caller-supplied ForwardModelSpecification; wavelet/angle choices not inferred",
+      "applicability": "isotropic pre-critical PP; constant-zero same convolution; mute uses global sample origin", "determinism": "deterministic", "resources": "CPU, dense 4x4 solve and convolution", "implementation": "sage_avo.forward.pipeline.forward_avo_dense_spec"
+    },
+    {
+      "identifier": "compare_avo_outputs", "operator_version": "forward-agreement-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Compare two independent near/mid/far outputs without declaring either ground truth.",
+      "input_contract": "matching [3,time,trace] arrays in the same amplitude units and alignment; pairwise finite support",
+      "output_contract": "ForwardAgreement per band: least-squares scale, correlation, normalized RMSE", "dependencies": ["numpy"], "calibration_or_data": "none",
+      "applicability": "diagnostic agreement, not field validity or uncertainty quantification", "determinism": "deterministic", "resources": "CPU, O(pixels)", "implementation": "sage_avo.forward.qc.compare_forward_outputs"
+    },
+    {
+      "identifier": "report_rgt_monotonicity", "operator_version": "rgt-qc-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Report vertical RGT monotonicity violations.",
+      "input_contract": "finite RGT [time,trace] in caller-defined relative-time units; tolerance in same units",
+      "output_contract": "fraction_bad and worst_step scalars", "dependencies": ["numpy", "scipy"], "calibration_or_data": "none",
+      "applicability": "coordinate QC only; does not certify fault-safe reflector identity", "determinism": "deterministic", "resources": "CPU, O(pixels)", "implementation": "sage_avo.structure.rgt.monotonicity_report"
+    },
+    {
+      "identifier": "plot_elastic_comparison", "operator_version": "array-figure-v1", "eligibility": "STABLE_NUMERICAL", "available": true,
+      "purpose": "Render existing truth/prior/prediction arrays; no scientific recomputation.",
+      "input_contract": "matching [3,time,trace] arrays, Vp/Vs m/s and density g/cc",
+      "output_contract": "Matplotlib Figure; caller controls persistence", "dependencies": ["matplotlib", "numpy"], "calibration_or_data": "none",
+      "applicability": "comparison visualization only; titles are inherited from source renderer", "determinism": "deterministic under fixed Matplotlib version/style", "resources": "CPU plotting", "implementation": "sage_avo.visualization.figures.plot_inversion_comparison"
+    },
+    {
+      "identifier": "substitute_calibrated_fluid", "operator_version": "candidate-b-calibrated-differential-v1", "eligibility": "REQUIRES_CALIBRATION", "available": true,
+      "purpose": "Apply approved same-frame calibrated differential Gassmann only inside a declared region.",
+      "input_contract": "brine [3,time,trace] Vp/Vs m/s,density g/cc; matching porosity,shaliness,saturation fractions,depth m,boolean region; CalibratedDryFrameModel, FluidRockPhysics, SupportAcceptanceContract",
+      "output_contract": "CalibratedFluidApplication with elastic [3,time,trace], unchanged outside region, calibration ID and support diagnostics",
+      "dependencies": ["numpy", "scipy"], "calibration_or_data": "required approved calibration and support contract; synthetic unit fixtures are not field approval",
+      "applicability": "all substituted pixels must pass a conservative per-pixel calibration-distance and physical-domain gate; not complete production realization acceptance", "determinism": "deterministic for fixed calibration", "resources": "CPU, neighbor search on selected pixels", "implementation": "sage_avo.geology.fluid_calibration.calibrated_differential_gassmann_substitution"
+    },
+    {
+      "identifier": "field_conditioned_realization", "operator_version": "stage01-conditioned-v003", "eligibility": "REQUIRES_FIELD_DATA", "available": false,
+      "purpose": "Generate a Stage-01-conditioned geological realization.", "input_contract": "field RGT/horizons/elastic backgrounds, calibrated reservoir model and masks", "output_contract": "FieldConditionedRealization", "dependencies": ["numpy", "scipy", "pandas", "optional field stack"], "calibration_or_data": "field data and trained/calibrated models",
+      "applicability": "not generic geology", "determinism": "seeded when prerequisites fixed", "resources": "CPU; model-dependent", "implementation": "sage_avo.geology.synthetic.make_field_conditioned_realization"
+    },
+    {
+      "identifier": "experimental_rgt_gnn", "operator_version": "unfrozen-research", "eligibility": "EXPERIMENTAL", "available": false,
+      "purpose": "Research graph construction and learned inversion.", "input_contract": "experiment-specific", "output_contract": "experiment-specific", "dependencies": ["torch", "torch-geometric"], "calibration_or_data": "training data and checkpoints",
+      "applicability": "not a stable public operator", "determinism": "contract-specific", "resources": "GPU/CPU research run", "implementation": "experimental branches and sage_avo.models"
+    }
+  ]
+}

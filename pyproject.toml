@@ -34,6 +34,9 @@ dev = ["pytest>=8.0", "ruff>=0.5"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"sage_avo.api" = ["catalog.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
