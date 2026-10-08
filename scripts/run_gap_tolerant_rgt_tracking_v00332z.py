@@ -174,7 +174,14 @@ def calibrate(
             candidate_links(case["native"], case["events"], radius, CONFIG["maximum_gap_traces"])
             for case in train_cases
         ]
-        scales = freeze_scales([row for links in link_lists for row in links], CONFIG)
+        scales = freeze_scales(
+            [
+                {**row, "realization_id": case["rid"]}
+                for case, links in zip(train_cases, link_lists)
+                for row in links
+            ],
+            CONFIG,
+        )
         graphs = []
         for case, links in zip(train_cases, link_lists):
             scored = score_links(links, scales, CONFIG)

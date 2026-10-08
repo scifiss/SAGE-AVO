@@ -6,6 +6,7 @@ from sage_avo.diagnostics.gap_tolerant_graph import (
     _crosses,
     candidate_links,
     detect_events,
+    freeze_scales,
     score_links,
     sparse_graph,
     track_paths,
@@ -166,3 +167,55 @@ def test_native_shift_discontinuity_rejects_plausible_skip_correspondence():
     assert scored["barrier"]
     assert not scored["safe"]
     assert scored["relation"] == "FAULT_OFFSET_CORRESPONDENCE"
+
+
+def test_training_scales_ignore_incoherent_distractor_pairs():
+    good = [
+        {
+            "realization_id": 1,
+            "source": index,
+            "target": index + 1,
+            "span": 1,
+            "d_tau": 0.2,
+            "d_time": 0.3,
+            "waveform_cosine": 0.95,
+            "phase_cosine": 0.9,
+            "ava_cosine": 0.95,
+            "shift_jump": 0.1,
+            "shift_second_difference": 0.2,
+            "shift_continuity": 0.15,
+        }
+        for index in range(20)
+    ]
+    distractors = [
+        {
+            **row,
+            "target": row["target"] + 100,
+            "d_tau": 6.0,
+            "d_time": 6.0,
+            "waveform_cosine": -0.9,
+            "phase_cosine": -0.8,
+            "ava_cosine": -0.9,
+            "shift_jump": 30.0,
+            "shift_second_difference": 60.0,
+        }
+        for row in good
+        for _ in range(4)
+    ]
+    settings = {
+        **_config(),
+        "barrier_robust_sigma": 6.0,
+        "barrier_quantile_cap": 0.99,
+        "scale_floors": {
+            "d_tau": 0.5,
+            "d_time": 0.5,
+            "waveform_penalty": 0.1,
+            "phase_penalty": 0.2,
+            "ava_penalty": 0.1,
+            "shift_continuity": 0.05,
+        },
+    }
+    scales = freeze_scales(good + distractors, settings)
+    assert scales["calibration_anchor_count"] == len(good)
+    assert scales["waveform_penalty"] == 0.1
+    assert scales["barrier_shift_jump"] < 1.0

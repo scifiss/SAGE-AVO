@@ -205,28 +205,72 @@ def candidate_links(
 
 
 def freeze_scales(rows: list[dict[str, Any]], config: Mapping[str, Any]) -> dict[str, float]:
-    """Robust observable scales and barriers from training candidate links only."""
+    """Freeze scales from best coherent training candidates, not distractors."""
     if not rows:
         raise ValueError("No training candidate links")
-    names = ("d_tau", "d_time", "shift_jump", "shift_second_difference", "shift_continuity")
+    coherent = [
+        row
+        for row in rows
+        if row["waveform_cosine"] >= config["minimum_waveform_cosine"]
+        and row["phase_cosine"] >= config["minimum_phase_cosine"]
+        and row["ava_cosine"] >= config["minimum_ava_cosine"]
+    ]
+    if not coherent:
+        raise ValueError("No coherent training candidate links")
+    anchors: dict[tuple[int, int, int], dict[str, Any]] = {}
+    for row in coherent:
+        key = (row.get("realization_id", -1), row["source"], row["span"])
+        quality = (
+            row["d_tau"]
+            + row["d_time"]
+            + 1
+            - row["waveform_cosine"]
+            + 1
+            - row["phase_cosine"]
+            + 1
+            - row["ava_cosine"]
+        )
+        old = anchors.get(key)
+        if old is None or quality < old["_quality"]:
+            anchors[key] = {**row, "_quality": quality}
+    reference = list(anchors.values())
+
+    def qscale(name: str, floor: float) -> float:
+        return float(max(np.quantile([row[name] for row in reference], 0.75), floor))
+
+    def barrier(name: str) -> float:
+        values = np.asarray([row[name] for row in reference], float)
+        median = float(np.median(values))
+        mad = float(np.median(np.abs(values - median)))
+        robust = median + config["barrier_robust_sigma"] * 1.4826 * mad
+        return float(max(min(robust, np.quantile(values, config["barrier_quantile_cap"])), 0.1))
+
+    floors = config["scale_floors"]
     return {
-        name: float(max(np.quantile([row[name] for row in rows], 0.75), 1e-6)) for name in names
-    } | {
+        "d_tau": qscale("d_tau", floors["d_tau"]),
+        "d_time": qscale("d_time", floors["d_time"]),
+        "shift_continuity": qscale("shift_continuity", floors["shift_continuity"]),
         "waveform_penalty": float(
-            max(np.quantile([1 - row["waveform_cosine"] for row in rows], 0.75), 1e-6)
-        ),
-        "phase_penalty": float(
-            max(np.quantile([1 - row["phase_cosine"] for row in rows], 0.75), 1e-6)
-        ),
-        "ava_penalty": float(max(np.quantile([1 - row["ava_cosine"] for row in rows], 0.75), 1e-6)),
-        "barrier_shift_jump": float(
-            np.quantile([row["shift_jump"] for row in rows], config["barrier_quantile_cap"])
-        ),
-        "barrier_shift_second": float(
-            np.quantile(
-                [row["shift_second_difference"] for row in rows], config["barrier_quantile_cap"]
+            max(
+                np.quantile([1 - row["waveform_cosine"] for row in reference], 0.75),
+                floors["waveform_penalty"],
             )
         ),
+        "phase_penalty": float(
+            max(
+                np.quantile([1 - row["phase_cosine"] for row in reference], 0.75),
+                floors["phase_penalty"],
+            )
+        ),
+        "ava_penalty": float(
+            max(
+                np.quantile([1 - row["ava_cosine"] for row in reference], 0.75),
+                floors["ava_penalty"],
+            )
+        ),
+        "barrier_shift_jump": barrier("shift_jump"),
+        "barrier_shift_second": barrier("shift_second_difference"),
+        "calibration_anchor_count": len(reference),
     }
 
 

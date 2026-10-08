@@ -28,6 +28,13 @@ gap_penalty: 1.0
 path_step_reward: 8.0
 barrier_robust_sigma: 6.0
 barrier_quantile_cap: 0.99
+scale_floors:
+  d_tau: 0.5
+  d_time: 0.5
+  waveform_penalty: 0.1
+  phase_penalty: 0.2
+  ava_penalty: 0.1
+  shift_continuity: 0.05
 minimum_component_points: 8
 minimum_component_span: 12
 node_spacing_candidates: [2, 4, 8]
