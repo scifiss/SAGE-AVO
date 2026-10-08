@@ -1,0 +1,17 @@
+revision: v00332ab-hybrid-sparse-graph-feasibility
+status: no_training_exploratory_feasibility
+reviewed_parent: 8be05862de02bcf6d9838848fae1e74d98f3d910
+training_audit_realization_ids: [3400000, 3400020, 3400040, 3400059, 3400080, 3400097]
+reused_validation_realization_ids: [3400078, 3400010, 3400042, 3400064, 3400075, 3400099]
+patch_source: immutable_v00331_stage03_patch_index
+patch_rebuild: all_indexed_patches_and_all_inference_tiles_in_audit_cohort
+inference_patch_shape: [50, 100]
+inference_stride: [10, 25]
+long_edge_minimum_trace_span: 16
+nonlocal_dense_comparison_maximum_trace_span: 4
+minimum_training_patch_fraction_with_long_edge: 0.50
+minimum_training_patch_fraction_with_any_edge: 0.75
+fault_truth_use: qc_only_after_observable_graph_construction
+training: false
+threshold_tuning: false
+production_tracker_changes: false

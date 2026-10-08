@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from collections.abc import Callable, Sequence
 
 import numpy as np
 import torch
@@ -42,8 +43,13 @@ def infer_full_realization(
     device: torch.device,
     valid_mask: np.ndarray | None = None,
     guidance_scale: float = 0.0,
+    graph_provider: Callable[[list[tuple[int, int]]], Sequence[object]] | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Infer and Hann-stitch elastic properties and segmentation probabilities."""
+    """Infer and Hann-stitch properties; optionally supply precomputed tile graphs.
+
+    The default dense path is unchanged. An optional research graph provider
+    must return one patch-local graph per tile in the requested batch order.
+    """
     model.eval()
     x_mean = np.asarray(normalization["x_mean"], dtype=np.float32)[:, None, None]
     x_std = np.asarray(normalization["x_std"], dtype=np.float32)[:, None, None]
@@ -86,16 +92,27 @@ def infer_full_realization(
                     ]
                 ).astype(np.float32)
             ).unsqueeze(1).to(device)
-        prediction = model.sample(
-            avo_batch,
-            low_batch,
-            rgt_batch,
-            steps=steps,
-            guidance_scale=guidance_scale,
-            avo_mask=mask_batch,
-        )
+        graph_batch = graph_provider(batch_positions) if graph_provider is not None else None
+        if graph_batch is not None and len(graph_batch) != len(batch_positions):
+            raise ValueError("Graph provider must return exactly one graph per tile")
+        sample_kwargs = {
+            "steps": steps,
+            "guidance_scale": guidance_scale,
+            "avo_mask": mask_batch,
+        }
+        if graph_batch is None:
+            prediction = model.sample(avo_batch, low_batch, rgt_batch, **sample_kwargs)
+        else:
+            prediction = model.sample(
+                avo_batch, low_batch, rgt_batch, graphs=graph_batch, **sample_kwargs
+            )
         final_time = torch.ones(prediction.shape[0], device=device)
-        logits = model(prediction, final_time, avo_batch, low_batch, rgt_batch).segmentation_logits
+        if graph_batch is None:
+            logits = model(prediction, final_time, avo_batch, low_batch, rgt_batch).segmentation_logits
+        else:
+            logits = model(
+                prediction, final_time, avo_batch, low_batch, rgt_batch, graph_batch
+            ).segmentation_logits
         physical = prediction.cpu().numpy() * y_std[None] + y_mean[None]
         probabilities = logits.softmax(dim=1).cpu().numpy()
         for item, (top, left) in enumerate(batch_positions):
@@ -106,7 +123,7 @@ def infer_full_realization(
         # Whole sections are intentionally accumulated on CPU.  Drop every
         # disposable CUDA tensor before constructing the next tile batch.
         del avo_batch, low_batch, rgt_batch, mask_batch
-        del prediction, final_time, logits, physical, probabilities
+        del prediction, final_time, logits, physical, probabilities, graph_batch
     elastic = elastic_sum / np.maximum(weight_sum[None], 1e-12)
     probabilities = probability_sum / np.maximum(weight_sum[None], 1e-12)
     return elastic.astype(np.float32), probabilities.argmax(axis=0).astype(np.uint8)
