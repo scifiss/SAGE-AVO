@@ -63,14 +63,20 @@ def provenance(expected: str) -> dict[str, Any]:
     branch = git("branch", "--show-current")
     remote = git("rev-parse", f"refs/remotes/origin/{BRANCH}")
     dirty = git("status", "--porcelain", "--untracked-files=no")
-    parent = git("rev-parse", "HEAD^")
-    if (head, branch, remote, parent) != (expected, BRANCH, expected, PARENT) or dirty:
+    immediate_parent = git("rev-parse", "HEAD^")
+    reviewed_parent_in_history = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", PARENT, "HEAD"],
+        cwd=REPO,
+        check=False,
+    ).returncode == 0
+    if (head, branch, remote) != (expected, BRANCH, expected) or not reviewed_parent_in_history or dirty:
         raise RuntimeError("Experiment provenance/clean-worktree gate failed")
     return {
         "repository": str(REPO),
         "branch": BRANCH,
         "commit_sha": head,
-        "parent_commit_sha": parent,
+        "parent_commit_sha": PARENT,
+        "immediate_parent_commit_sha": immediate_parent,
         "protected_source_config_test_sha256": {name: sha(REPO / name) for name in PROTECTED},
         "tracked_worktree_clean_at_start": True,
     }
