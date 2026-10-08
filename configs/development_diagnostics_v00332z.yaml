@@ -16,7 +16,7 @@ weak_candidates:
 weak_local_window: 41
 weak_minimum_distance: 4
 weak_overlap_samples: 1.0
-weak_maximum_per_trace: 20
+weak_maximum_per_trace: 4
 repeatability_tolerance_samples: 1.0
 search_radius_candidates: [2.0, 4.0, 6.0]
 maximum_gap_traces: 1

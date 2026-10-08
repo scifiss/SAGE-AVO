@@ -292,22 +292,27 @@ def track_paths(
 ) -> dict[str, Any]:
     """Repeated best DAG paths with exclusive nodes and noncrossing selected links."""
     incoming: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    by_boundary: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for row in links:
         if row["safe"]:
             incoming[row["target"]].append(row)
+            for boundary in range(events[row["source"]]["trace"], events[row["target"]]["trace"]):
+                by_boundary[boundary].append(row)
     used: set[int] = set()
+    blocked: set[int] = set()
     accepted: list[dict[str, Any]] = []
     paths: list[list[int]] = []
     path_links: list[list[dict[str, Any]]] = []
+    event_order = sorted(range(len(events)), key=lambda i: (events[i]["trace"], events[i]["time"]))
     while True:
         best_score = np.zeros(len(events), float)
         predecessor: dict[int, dict[str, Any]] = {}
-        for j in sorted(range(len(events)), key=lambda i: (events[i]["trace"], events[i]["time"])):
+        for j in event_order:
             if j in used:
                 continue
             for row in incoming[j]:
                 i = row["source"]
-                if i in used or any(_crosses(row, old, events) for old in accepted):
+                if i in used or id(row) in blocked:
                     continue
                 score = best_score[i] + config["path_step_reward"] * row["span"] - row["cost"]
                 if score > best_score[j] + 1e-10:
@@ -343,6 +348,13 @@ def track_paths(
         path_links.append(chain)
         used.update(indices)
         accepted.extend(chain)
+        for selected in chain:
+            for boundary in range(
+                events[selected["source"]]["trace"], events[selected["target"]]["trace"]
+            ):
+                for candidate in by_boundary[boundary]:
+                    if id(candidate) not in blocked and _crosses(candidate, selected, events):
+                        blocked.add(id(candidate))
     return {
         "components": paths,
         "path_links": path_links,

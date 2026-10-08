@@ -122,6 +122,7 @@ def calibrate(
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
     detector_rows = []
     for weak in CONFIG["weak_candidates"]:
+        print(f"[v00332z] calibrating detector {weak['name']}", flush=True)
         for rid in train_ids:
             full = case_events(rid, weak)
             subset = case_events(rid, weak, repeat=True)
@@ -157,13 +158,18 @@ def calibrate(
     ]
     selected = max(
         eligible or detector_summary,
-        key=lambda row: (row["mean_weak_count"], row["minimum_repeatability"]),
+        key=lambda row: (
+            row["minimum_repeatability"],
+            row["mean_repeatability"],
+            row["mean_weak_count"],
+        ),
     )
     weak = next(row for row in CONFIG["weak_candidates"] if row["name"] == selected["name"])
     train_cases = [case_events(rid, weak) for rid in train_ids]
     association_rows = []
     candidates = {}
     for radius in CONFIG["search_radius_candidates"]:
+        print(f"[v00332z] calibrating link radius {radius}", flush=True)
         link_lists = [
             candidate_links(case["native"], case["events"], radius, CONFIG["maximum_gap_traces"])
             for case in train_cases
