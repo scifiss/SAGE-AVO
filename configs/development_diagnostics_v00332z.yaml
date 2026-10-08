@@ -1,0 +1,43 @@
+revision: v00332z-gap-tolerant-rgt-tracking
+experiment_name: sage_avo_s01_v00332z_gap_tolerant_rgt_tracking
+calibration_training_count: 6
+strong_detector:
+  event_quantile: 0.75
+  minimum_distance: 5
+  event_prominence_fraction: 0.06
+  event_refinement_radius: 2
+  event_waveform_radius: 2
+  minimum_phase_concentration: 0.35
+  maximum_events_per_trace: 28
+weak_candidates:
+  - {name: local_q55, local_envelope_quantile: 0.55, local_prominence_fraction: 0.15, minimum_phase_concentration: 0.70}
+  - {name: local_q65, local_envelope_quantile: 0.65, local_prominence_fraction: 0.20, minimum_phase_concentration: 0.75}
+  - {name: local_q75, local_envelope_quantile: 0.75, local_prominence_fraction: 0.25, minimum_phase_concentration: 0.80}
+weak_local_window: 41
+weak_minimum_distance: 4
+weak_overlap_samples: 1.0
+weak_maximum_per_trace: 20
+repeatability_tolerance_samples: 1.0
+search_radius_candidates: [2.0, 4.0, 6.0]
+maximum_gap_traces: 1
+minimum_waveform_cosine: 0.50
+minimum_phase_cosine: 0.20
+minimum_ava_cosine: 0.20
+maximum_normalized_cost: 8.0
+gap_penalty: 1.0
+path_step_reward: 8.0
+barrier_robust_sigma: 6.0
+barrier_quantile_cap: 0.99
+minimum_component_points: 8
+minimum_component_span: 12
+node_spacing_candidates: [2, 4, 8]
+edge_spans_traces: [4, 8, 16, 32, 64]
+normal_offset_samples: 1.5
+decision:
+  minimum_repeatability: 0.80
+  minimum_matched_fraction: 0.70
+  minimum_fault_split_recall: 0.90
+  maximum_long_edge_fault_crossing: 0.02
+  minimum_high_dip_retention: 0.80
+  minimum_curved_retention: 0.80
+  maximum_node_fraction: 0.02
