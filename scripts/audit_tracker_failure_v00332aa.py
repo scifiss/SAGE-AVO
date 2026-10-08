@@ -29,7 +29,7 @@ from scipy.signal import find_peaks, hilbert
 from sage_avo.diagnostics.gap_tolerant_graph import detect_events
 from sage_avo.diagnostics.rgt_topology_repair import load_faults
 from sage_avo.diagnostics.skeleton_graph import path_fault_qc
-from sage_avo.diagnostics.tracker_failure_audit import classify_events
+from sage_avo.diagnostics.tracker_failure_audit import classify_events, masked_eligible_endpoints
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -275,6 +275,8 @@ def main() -> None:
     }
     (output / "v00332aa_experiment_contract.json").write_text(json.dumps(contract, indent=2) + "\n")
     survival, rejected, fault, coverage = [], [], [], []
+    masked_rows: list[dict[str, Any]] = []
+    sensitivity: list[dict[str, Any]] = []
     all_reason_rows: list[dict[str, Any]] = []
     q = json.loads(
         (base / "stage04/sage_avo_s01_v00332q_clean_20epoch_corrected_rgt/v00332q_contract.json").read_text()
@@ -287,6 +289,30 @@ def main() -> None:
         links = links_by_case[rid]
         nodes = nodes_by_case[rid]
         reasons, replayed = classify_events(events, links, nodes, config)
+        masked = masked_eligible_endpoints(events, links, config)
+        masked_rows.extend({"realization_id": rid, **row} for row in masked)
+        for name, reward, gap_delta in (
+            ("frozen", 8.0, 0.0),
+            ("reward_6", 6.0, 0.0),
+            ("reward_10", 10.0, 0.0),
+            ("gap_penalty_0", 8.0, -1.0),
+            ("gap_penalty_2", 8.0, 1.0),
+        ):
+            varied_links = (
+                links if gap_delta == 0
+                else [dict(row, cost=float(row["cost"]) + gap_delta * (row["span"] - 1)) for row in links]
+            )
+            varied_config = {**config, "path_step_reward": reward}
+            sensitivity.append(
+                {
+                    "realization_id": rid,
+                    "objective_only_variant": name,
+                    "masked_eligible_endpoint_count": len(
+                        masked if name == "frozen"
+                        else masked_eligible_endpoints(events, varied_links, varied_config)
+                    ),
+                }
+            )
         counts = Counter(row["first_decisive_reason"] for row in reasons)
         accepted = sum(row["accepted_track"] for row in reasons)
         if accepted != round(float(qc.loc[rid, "assigned_event_fraction"]) * len(events)):
@@ -334,6 +360,7 @@ def main() -> None:
                     row["on_initial_best_eligible_path"] and not row["accepted_track"]
                     for row in reasons
                 ),
+                "masked_eligible_endpoint_count": len(masked),
                 "weak_post_top_four_count": int(qc.loc[rid, "weak_event_count"]),
                 "weak_removed_by_top_four": detector["weak_pre_top_four_count"]
                 - int(qc.loc[rid, "weak_event_count"]),
@@ -386,6 +413,8 @@ def main() -> None:
     write_csv(output / "v00332aa_tracker_rejection_reasons.csv", rejected)
     write_csv(output / "v00332aa_fault_rejection_attribution.csv", fault)
     write_csv(output / "v00332aa_component_coverage.csv", coverage)
+    write_csv(output / "v00332aa_masked_eligible_endpoints.csv", masked_rows)
+    write_csv(output / "v00332aa_objective_sensitivity.csv", sensitivity)
     reason_counts = Counter(row["first_decisive_reason"] for row in all_reason_rows)
     detected = len(all_reason_rows)
     accepted = reason_counts["accepted"]
@@ -423,12 +452,20 @@ def main() -> None:
         "ranked_exclusion_reasons": root_causes,
         "fault_plausible_crossing_reasons": dict(fault_summary),
         "known_synthetic_one_predecessor_defect": True,
-        "frozen_case_impact_of_one_predecessor_defect": "NOT_CAUSALLY_IDENTIFIED",
+        "frozen_masked_eligible_endpoint_count": len(masked_rows),
+        "frozen_case_event_coverage_impact_of_one_predecessor_defect": "NOT_CAUSALLY_IDENTIFIED",
         "geological_true_reflector_recall": "UNKNOWN_NO_INDEPENDENT_REFLECTOR_TRUTH",
         "validation_status": "EXPLORATORY_DEVELOPMENT_QC",
         "no_training": True,
     }
     (output / "v00332aa_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
+    frozen_examples = "\n".join(
+        f"- Case {row['realization_id']}, endpoint {row['endpoint_event']}: "
+        f"best path {row['best_path_event_count']} events/{row['best_path_span']} traces, "
+        f"score {row['best_score']:.3f}; eligible alternative score "
+        f"{row['eligible_alternative_score']:.3f}."
+        for row in masked_rows[:10]
+    )
     (output / "v00332aa_dp_counterexamples.md").write_text(
         "# One-predecessor DP counterexample\n\n"
         "Two safe paths share trace-12 endpoint. A seven-event path at traces "
@@ -439,7 +476,13 @@ def main() -> None:
         "chain at the endpoint, rejects it under the eight-event gate, and "
         "returns no component. See the strict-xfail regression in "
         "tests/test_tracker_failure_audit.py. This proves an algorithmic defect "
-        "on a deterministic graph, not its frequency on frozen geology.\n"
+        "on a deterministic graph.\n\n"
+        f"Frozen one-predecessor masked eligible endpoints: {len(masked_rows)}. "
+        "These endpoint counts are not independent recovered events and do not "
+        "establish a coverage gain under competing exclusive/noncrossing tracks.\n\n"
+        f"{frozen_examples if frozen_examples else 'No frozen masked endpoint found.'}\n\n"
+        "Objective-only reward/gap sensitivity on fixed frozen safe links is in "
+        "v00332aa_objective_sensitivity.csv; it is not parameter tuning.\n"
     )
     report = [
         "# v00332aa frozen reflector-coverage root-cause audit",
@@ -458,7 +501,7 @@ def main() -> None:
         "", "## Interpretation", "",
         "Candidate/plausible/safe are link-incidence stages. `candidate_track` means positive-best-path participation in the initial DP scan, not a geological truth label.",
         "Final selection categories are observational counterfactuals; exclusive-node and greedy order are not cleanly separable without a different tracker.",
-        "The deterministic one-predecessor counterexample confirms a tracker defect, but this audit does not assume it explains a particular fraction of frozen exclusions.",
+        f"The deterministic one-predecessor counterexample confirms a tracker defect. {len(masked_rows)} frozen endpoints also mask positive eligible alternatives, but endpoint counts do not equal recoverable events.",
         "Weak pre-cap counts were the only missing detector data regenerated; the complete six-case link/component pipeline was not rerun.",
         "Global-envelope pre-height peaks are an upper-bound candidate measure, not true-reflector recall. The fraction of real reflectors never detected is unknown without independent labels.",
         "Fault truth was used only after frozen calibration for QC. Direct barrier rejections and final graph safety are separate effects.",

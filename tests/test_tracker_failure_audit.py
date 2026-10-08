@@ -3,7 +3,12 @@
 import pytest
 
 from sage_avo.diagnostics.gap_tolerant_graph import track_paths
-from sage_avo.diagnostics.tracker_failure_audit import classify_events, eligibility, replay
+from sage_avo.diagnostics.tracker_failure_audit import (
+    classify_events,
+    eligibility,
+    masked_eligible_endpoints,
+    replay,
+)
 
 
 def _event(trace, index):
@@ -44,6 +49,9 @@ def test_exact_structural_eligibility_finds_valid_alternative():
     eligible = eligibility(events, links, config)
     assert set(valid) <= eligible["events"]
     assert eligible["max_count"][valid[-1]] == 8
+    masked = masked_eligible_endpoints(events, links, config)
+    assert [row["endpoint_event"] for row in masked] == [valid[-1]]
+    assert masked[0]["eligible_alternative_score"] < masked[0]["best_score"]
 
 
 def test_replay_matches_production_and_accounting_is_partitioned():

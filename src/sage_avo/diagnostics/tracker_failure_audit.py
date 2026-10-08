@@ -64,6 +64,73 @@ def eligibility(
     return {"events": eligible, "max_count": max_count, "max_span": max_span}
 
 
+def masked_eligible_endpoints(
+    events: list[dict[str, Any]], links: list[dict[str, Any]], config: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Find frozen endpoints where one-best-predecessor masks a positive eligible path.
+
+    The alternative DP retains the best score per (start trace, capped event
+    count). It is an analysis-only upper bound on recoverable endpoints: an
+    alternative may conflict with other selected paths.
+    """
+    incoming: dict[int, list[dict[str, Any]]] = defaultdict(list)
+    for row in links:
+        if row["safe"]:
+            incoming[int(row["target"])].append(row)
+    minimum_count = int(config["minimum_component_points"])
+    minimum_span = int(config["minimum_component_span"])
+    order = sorted(range(len(events)), key=lambda index: (events[index]["trace"], events[index]["time"]))
+    best = np.zeros(len(events), float)
+    predecessor: dict[int, dict[str, Any]] = {}
+    states: list[dict[tuple[int, int], float]] = [
+        {(int(event["trace"]), 1): 0.0} for event in events
+    ]
+    for target in order:
+        for row in incoming[target]:
+            source = int(row["source"])
+            delta = float(config["path_step_reward"] * row["span"] - row["cost"])
+            proposal = best[source] + delta
+            if proposal > best[target] + 1e-10:
+                best[target] = proposal
+                predecessor[target] = row
+            for (start, count), previous in states[source].items():
+                key = (start, min(count + 1, minimum_count))
+                states[target][key] = max(states[target].get(key, float("-inf")), previous + delta)
+    masked = []
+    for end in order:
+        if best[end] <= 0:
+            continue
+        cursor = end
+        count = 1
+        while cursor in predecessor:
+            cursor = int(predecessor[cursor]["source"])
+            count += 1
+        span = int(events[end]["trace"] - events[cursor]["trace"])
+        if count >= minimum_count and span >= minimum_span:
+            continue
+        alternative = max(
+            (
+                score
+                for (start, length), score in states[end].items()
+                if length >= minimum_count
+                and int(events[end]["trace"]) - start >= minimum_span
+                and score > 0
+            ),
+            default=None,
+        )
+        if alternative is not None:
+            masked.append(
+                {
+                    "endpoint_event": end,
+                    "best_score": float(best[end]),
+                    "best_path_event_count": count,
+                    "best_path_span": span,
+                    "eligible_alternative_score": float(alternative),
+                }
+            )
+    return masked
+
+
 def replay(
     events: list[dict[str, Any]], links: list[dict[str, Any]], config: Mapping[str, Any]
 ) -> dict[str, Any]:
