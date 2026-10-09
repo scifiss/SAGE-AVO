@@ -407,6 +407,7 @@ def paired_uncertainty(metrics, config):
                     "baseline_mean": float(values[baseline].mean()),
                     "candidate_mean": float(values[candidate].mean()),
                     "positive_realizations": int((difference > 0).sum()),
+                    "negative_realizations": int((difference < 0).sum()),
                 })
     return pd.DataFrame(rows)
 
@@ -421,9 +422,13 @@ def comparison(paired, baseline, candidate, region="all", metric="joint_nrmse"):
     if len(reverse):
         row = reverse.iloc[0].to_dict()
         old_lo, old_hi = row["ci_low"], row["ci_high"]
+        old_baseline, old_candidate = row["baseline_mean"], row["candidate_mean"]
+        old_positive, old_negative = row["positive_realizations"], row["negative_realizations"]
         row.update(baseline=baseline, candidate=candidate,
                    mean_improvement=-row["mean_improvement"], ci_low=-old_hi, ci_high=-old_lo,
-                   relative_improvement=float(-row["mean_improvement"] / max(row["candidate_mean"], 1e-12)))
+                   relative_improvement=float(-row["mean_improvement"] / max(old_candidate, 1e-12)),
+                   baseline_mean=old_candidate, candidate_mean=old_baseline,
+                   positive_realizations=old_negative, negative_realizations=old_positive)
         return row
     raise ValueError(f"Missing paired comparison: {baseline}/{candidate}/{region}")
 

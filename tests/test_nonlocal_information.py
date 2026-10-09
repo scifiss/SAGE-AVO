@@ -135,6 +135,9 @@ def test_realization_uncertainty_and_reversed_comparison_decision():
     reverse = comparison(paired, "local_disrupted", "local_rgt")
     assert reverse["ci_low"] > 0 and reverse["relative_improvement"] > 0
     assert reverse["realizations"] == 12
+    assert reverse["positive_realizations"] == 12
+    assert reverse["negative_realizations"] == 0
+    assert reverse["baseline_mean"] > reverse["candidate_mean"]
     assert decision(paired, fixture_config(), adequate=True) == "RGT_NONLOCAL_INFORMATION_SUPPORTED"
     assert decision(paired, fixture_config(), adequate=False) == "PROBE_INCONCLUSIVE"
 

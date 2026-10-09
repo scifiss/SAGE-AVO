@@ -104,7 +104,8 @@ def make_contract(args):
                    dataset / "split_group_ids.json", dataset / "normalization.json"]
     record = {
         "repository": str(REPO), "branch": BRANCH, "commit_sha": args.commit,
-        "parent_commit_sha": PARENT, "source_sha256": hashes, "config": config,
+        "parent_commit_sha": git("rev-parse", "HEAD^"),
+        "reviewed_parent_commit_sha": PARENT, "source_sha256": hashes, "config": config,
         "dataset": str(dataset), "checkpoint": str(checkpoint),
         "output": str(output), "stage02": str(args.stage02.resolve()),
         "input_sha256": {str(p): file_sha256(p) for p in input_paths},
@@ -303,7 +304,8 @@ def analyze(record, records, normalization, qc):
                 for name, mask in masks.items()]
     record_out = {
         "decision": chosen, "adequate": bool(adequate), "branch": BRANCH,
-        "commit_sha": record["commit_sha"], "parent_commit_sha": PARENT,
+        "commit_sha": record["commit_sha"], "parent_commit_sha": record["parent_commit_sha"],
+        "reviewed_parent_commit_sha": PARENT,
         "checkpoint_sha256": record["input_sha256"][record["checkpoint"]],
         "checkpoint_epoch": 40, "flow_time": 0, "SAGE_AVO_training_performed": False,
         "graph_construction_modified": False, "probe_fitting": fitting,
@@ -325,7 +327,8 @@ Decision: `{chosen}`
 
 ## Scope and provenance
 
-Branch: `{BRANCH}`. Source SHA: `{record['commit_sha']}`. Parent: `{PARENT}`.
+Branch: `{BRANCH}`. Source SHA: `{record['commit_sha']}`.
+Immediate parent: `{record['parent_commit_sha']}`. Reviewed experiment base: `{PARENT}`.
 Frozen epoch-40 dense checkpoint SHA256: `{record_out['checkpoint_sha256']}`.
 Only small linear ridge probes were fitted. No SAGE-AVO training, graph modifications,
 Heun sampling, intermediate truth-derived states, or test evaluation occurred.
