@@ -1,0 +1,28 @@
+schema_version: 1
+experiment: v00332ad_nonlocal_information_value
+seed: 12345
+checkpoint_epoch: 40
+flow_time: 0.0
+dataset: ds_v00331_production100_support_aware
+model_config: sage_avo_s01_v0031.yaml
+patch_shape: [50, 100]
+stride: [10, 25]
+lateral_offsets: [16, 32, 64]
+queries_per_realization: 384
+candidate_times_per_trace: 12
+local_common_components: 48
+extra_components: 16
+ridge_alphas: [0.0001, 0.001, 0.01, 0.1, 1.0]
+inner_training_fraction: 0.8
+bootstrap_repetitions: 5000
+confidence: 0.95
+minimum_relative_improvement: 0.01
+minimum_development_realizations: 12
+minimum_common_support_fraction: 0.5
+high_dip_training_quantile: 0.8
+discontinuity_training_quantile: 0.9
+fault_corridor_traces: 3.0
+target: normalized_elastic_minus_supplied_prior
+development_role: exploratory_previously_examined_validation
+test_used: false
+training_authorized: regression_probes_only
