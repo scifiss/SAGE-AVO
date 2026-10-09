@@ -50,9 +50,11 @@ retaining the same graph and parameter capacity. It is not a graph-rewiring clai
 `train_controlled_variant(..., variant="full", hybrid_condition="A" | "B" | "C",
 topology_cache=cache)` is the optional future entry point. Each condition has its
 own run directory/manifest and cannot resume another condition. Prepare full
-train/validation caches first. The immutable test split is reserved for later
-evaluation after the protocol is frozen; reused validation cases are exploratory.
-Historical test exposure needs confirmation before claiming independence.
+train/validation caches first. Reused validation cases are exploratory. The immutable
+test split was already evaluated by the epoch-40 baseline and cannot be called
+untouched. Keep it as secondary historical evaluation; a new disjoint confirmation
+cohort is required before the full matched-ablation readiness gate can pass.
+This task does not create that cohort or alter the immutable train/validation data.
 
 The diagnostic command verifies the pushed commit, clean tracked tree and
 source/config/test hashes before creating private artifacts:

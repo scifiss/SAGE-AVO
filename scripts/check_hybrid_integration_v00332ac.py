@@ -68,11 +68,9 @@ def check_provenance(expected):
         git("rev-parse", "HEAD"),
         git("branch", "--show-current"),
         git("rev-parse", f"origin/{BRANCH}"),
-        git("rev-parse", "HEAD^"),
-    ) != (expected, BRANCH, expected, PARENT) or git(
-        "status", "--porcelain", "--untracked-files=no"
-    ):
+    ) != (expected, BRANCH, expected) or git("status", "--porcelain", "--untracked-files=no"):
         raise RuntimeError("Require exact pushed commit, intended parent and clean tracked source")
+    git("merge-base", "--is-ancestor", PARENT, "HEAD")
     paths = git("ls-files", "src", "configs", "scripts", "tests", "pyproject.toml").splitlines()
     hashes = {name: sha(REPO / name) for name in paths}
     for name, digest in hashes.items():
@@ -83,7 +81,8 @@ def check_provenance(expected):
         "repository": str(REPO),
         "branch": BRANCH,
         "commit_sha": expected,
-        "parent_commit_sha": PARENT,
+        "parent_commit_sha": git("rev-parse", "HEAD^"),
+        "reviewed_parent_commit_sha": PARENT,
         "source_config_test_sha256": hashes,
         "tracked_worktree_clean_at_start": True,
         "remote_push_verified": True,
@@ -92,6 +91,38 @@ def check_provenance(expected):
 
 def write_json(path, record):
     Path(path).write_text(json.dumps(record, indent=2, allow_nan=False) + "\n")
+
+
+def markdown_property_table(rows):
+    """Render the small report table without an optional pandas dependency."""
+    columns = list(rows[0])
+    lines = ["| " + " | ".join(columns) + " |", "| " + " | ".join(["---"] * len(columns)) + " |"]
+    for row in rows:
+        cells = [
+            format(row[key], ".6g") if isinstance(row[key], float) else str(row[key])
+            for key in columns
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    return "\n".join(lines)
+
+
+def historical_test_exposure(private, test_ids):
+    """Inspect prediction filenames/metadata only; never open test arrays."""
+    baseline = private / "stage_artifacts/stage05/v00332d_epoch40_baseline/predictions"
+    files = sorted(baseline.glob("*/realization_*.npz"))
+    exposed = {int(path.stem.split("_")[-1]) for path in files}
+    exposed &= set(map(int, test_ids))
+    return {
+        "immutable_test_ids": list(map(int, test_ids)),
+        "historically_evaluated_test_ids": sorted(exposed),
+        "prediction_metadata_paths": [str(p.relative_to(private)) for p in files],
+        "test_arrays_opened": 0,
+        "independent_confirmation_available": False,
+        "status": "ALL_IMMUTABLE_TEST_CASES_PREVIOUSLY_EVALUATED"
+        if exposed == set(test_ids)
+        else "HISTORICAL_EXPOSURE_NOT_FULLY_ESTABLISHED",
+        "required_resolution": "new disjoint untouched confirmation cohort; do not relabel existing test cases",
+    }
 
 
 def graph_equal(a, b):
@@ -409,6 +440,12 @@ def main():
     inputs += [
         dataset_root / "realizations" / f"realization_{rid:07d}.npz" for rid in train_ids + val_ids
     ]
+    exposure = historical_test_exposure(private, splits["test"])
+    baseline_manifest = (
+        private / "stage_artifacts/stage05/v00332d_epoch40_baseline/predictions/full/manifest.json"
+    )
+    if baseline_manifest.exists():
+        inputs.append(baseline_manifest)
     run_contract = {
         **provenance,
         "frozen_config": contract,
@@ -421,6 +458,7 @@ def main():
         "optimizer_steps": 0,
         "checkpoint_loads": 0,
         "test_realizations_loaded": [],
+        "historical_test_exposure": exposure,
         "truth_use": "training objective only; never topology",
     }
     write_json(output / "v00332ac_experiment_contract.json", run_contract)
@@ -599,6 +637,10 @@ def main():
         and flow["exact_pp_endpoints_finite"]
         and flow["complete_objective_finite"]
         and flow["sparse_gradient_l1"] > 0
+        and flow["active_direct_outside_support_max_error"] == 0
+        and flow["direct_segmentation_max_error"] == 0
+        and flow["parameter_state_unchanged"]
+        and flow["velocity_evaluation_count"] == 2 * contract["diagnostic_flow_steps"]
     )
     control_pass = (
         flow["B_C_parameter_count_equal"]
@@ -608,6 +650,7 @@ def main():
         and sampling["weights_equal"]
         and sampling["40_draw_order_equal"]
     )
+    independent_test_pass = exposure["independent_confirmation_available"]
     decision = (
         "TOPOLOGY_CACHE_MISMATCH"
         if not topology_pass
@@ -618,19 +661,27 @@ def main():
         else "FLOW_INTEGRATION_FAILURE"
         if not flow_pass
         else "MATCHED_ABLATION_CONTROL_INVALID"
-        if not control_pass
+        if not control_pass or not independent_test_pass
         else "HYBRID_TRAINING_INTEGRATION_READY"
     )
     summary = {
         "decision": decision,
         "branch": BRANCH,
         "experiment_commit": args.expected_commit,
-        "parent_commit": PARENT,
+        "parent_commit": provenance["parent_commit_sha"],
+        "reviewed_parent_commit": PARENT,
         "topology_pass": topology_pass,
         "augmentation_pass": augmentation_pass,
         "component_isolation_pass": isolation_pass,
         "flow_pass": flow_pass,
         "matched_control_pass": control_pass,
+        "mechanical_training_ready": topology_pass
+        and augmentation_pass
+        and isolation_pass
+        and flow_pass
+        and control_pass,
+        "independent_test_pass": independent_test_pass,
+        "historical_test_exposure": exposure,
         "audited_indexed_patches": len(qc),
         "topology": topology_rows,
         "isolation": isolation,
@@ -681,7 +732,7 @@ Zero-scale whole-flow error: {flow["zero_scale_whole_flow_max_error"]}.
 Finite gradients/flow/exact-PP and objective: {flow_pass}.
 Instantaneous sparse residual outside support: {flow["active_direct_outside_support_max_error"]}.
 
-{pd.DataFrame(flow["properties"]).to_markdown(index=False)}
+{markdown_property_table(flow["properties"])}
 
 Full-flow property changes can extend beyond instantaneous sparse support because
 the subsequent dense CNN/GroupNorm evaluates a changed state. This is existing
@@ -706,8 +757,14 @@ RMSE as primary, with density/high-dip/fault/reservoir/unsupported-region and
 segmentation/exact-PP reports separately. Same original weighted sampling, data
 order, augmentation, objective/curriculum, optimizer, budget, validation-only
 checkpoint criterion and tiling for all three variants. Immutable test IDs:
-{splits["test"]}. They were not loaded here. Prior validation cases remain exploratory;
-historical test exposure must be checked before claiming independent confirmation.
+{splits["test"]}. Their arrays were not loaded here. Existing baseline prediction
+filenames establish prior evaluation of {exposure["historically_evaluated_test_ids"]}.
+No subset of these ten cases can be called genuinely untouched. Prior validation
+cases remain exploratory; the old test split is secondary historical evidence.
+A new, disjoint confirmation cohort is required and was not generated in this task.
+The mechanical integration gates passed: {summary["mechanical_training_ready"]}.
+The full readiness gate is blocked by the independent-test protocol, not unequal
+B/C capacity or a numerical/mechanism failure.
 
 Sparse support remains limited (v00332ab); no performance gain is established.
 Future training must prepare caches for its entire train/validation cohorts before
@@ -718,6 +775,8 @@ launching. No multi-epoch run is authorized or performed in this readiness audit
     for path, digest in run_contract["input_sha256"].items():
         if sha(private / path) != digest:
             raise RuntimeError("Scientific input changed during audit")
+    if historical_test_exposure(private, splits["test"]) != exposure:
+        raise RuntimeError("Historical test exposure evidence changed during audit")
     output.rename(final)
     print(json.dumps({"decision": decision, "report": str(final / "v00332ac_report.md")}, indent=2))
 

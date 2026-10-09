@@ -423,3 +423,29 @@ def test_diagnostic_complete_objective_and_flow_uses_actual_collated_batch(
     assert result["parameter_state_unchanged"]
     assert result["B_C_initial_state_identical"]
     assert result["B_C_velocity_max_difference"] > 0
+
+
+def test_report_and_test_exposure_audit_need_no_optional_formatter_or_test_data(
+    tmp_path, monkeypatch
+):
+    module_spec = importlib.util.spec_from_file_location(
+        "hybrid_report_audit", ROOT / "scripts/check_hybrid_integration_v00332ac.py"
+    )
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    table = module.markdown_property_table([{"property": "Vp", "physical_rms": 0.125}])
+    assert "| property | physical_rms |" in table and "| Vp | 0.125 |" in table
+    baseline = tmp_path / "stage_artifacts/stage05/v00332d_epoch40_baseline/predictions/full"
+    baseline.mkdir(parents=True)
+    for rid in (7, 8):
+        (baseline / f"realization_{rid}.npz").touch()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Historical exposure audit must never load test arrays")
+
+    monkeypatch.setattr(np, "load", forbidden)
+    exposure = module.historical_test_exposure(tmp_path, [7, 8])
+    assert exposure["historically_evaluated_test_ids"] == [7, 8]
+    assert exposure["status"] == "ALL_IMMUTABLE_TEST_CASES_PREVIOUSLY_EVALUATED"
+    assert not exposure["independent_confirmation_available"]
+    assert exposure["test_arrays_opened"] == 0

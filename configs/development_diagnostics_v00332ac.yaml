@@ -38,7 +38,8 @@ future_matched:
   sample_steps: 20
   patch_shape: [50, 100]
   inference_stride: [10, 25]
-  untouched_test: immutable_split_ids_test_never_loaded_during_v00332ac
+  immutable_test: historically_exposed_secondary_evaluation_only
+  confirmatory_test: require_new_disjoint_untouched_cohort_not_generated_in_this_task
   topology: same_observable_full_section_cache_then_crop
   test_truth_use: final_evaluation_only_after_architecture_and_checkpoint_frozen
 gate:
@@ -47,3 +48,4 @@ gate:
   require_identical_cache_crop: true
   require_matching_sampler_weights: true
   require_nontrivial_source_permutation: true
+  require_genuinely_untouched_confirmation_cohort: true
