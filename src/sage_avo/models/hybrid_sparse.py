@@ -188,16 +188,39 @@ def scatter_component_local(
 class SparseReflectorBranch(nn.Module):
     """Two-layer TransformerConv on safe accepted within-component long edges."""
 
-    def __init__(self, channels: int, heads: int = 2) -> None:
+    def __init__(
+        self, channels: int, heads: int = 2, *,
+        message_control: str = "genuine", control_seed: int = 12345,
+    ) -> None:
         super().__init__()
         if channels % heads:
             raise ValueError("channels must be divisible by heads")
+        if message_control not in {"genuine", "source_permuted"}:
+            raise ValueError("Unknown sparse message control")
+        self.message_control = message_control
+        self.control_seed = int(control_seed)
         self.layers = nn.ModuleList(
             TransformerConv(channels, channels // heads, heads=heads, edge_dim=9)
             for _ in range(2)
         )
         self.norms = nn.ModuleList(nn.LayerNorm(channels) for _ in range(2))
         self.projection = nn.Linear(channels, channels)
+
+    def messages(self, features: Tensor, graph: SparsePatchGraph) -> Tensor:
+        """Component-local messages; B disrupts only the source payload identity.
+
+        Queries/root features, endpoints, degrees, edge attributes, component
+        restrictions and parameters are identical to C. Each layer permutes
+        source keys/values within active nodes of the same safe component.
+        """
+        permutation = component_source_permutation(graph, self.control_seed)
+        hidden = features
+        for layer, norm in zip(self.layers, self.norms):
+            source = hidden[permutation] if self.message_control == "source_permuted" else hidden
+            hidden = norm(hidden + F.gelu(layer(
+                (source, hidden), graph.edge_index, graph.edge_attr
+            )))
+        return self.projection(hidden)
 
     def forward(
         self, cnn: Tensor, graphs: Sequence[SparsePatchGraph]
@@ -216,18 +239,36 @@ class SparseReflectorBranch(nn.Module):
             features = sample_cnn_nodes(cnn[item : item + 1], graph)
             if not torch.isfinite(graph.edge_attr).all():
                 raise ValueError("Sparse graph edge descriptors must be finite")
-            hidden = features
-            for layer, norm in zip(self.layers, self.norms):
-                hidden = norm(hidden + F.gelu(layer(hidden, graph.edge_index, graph.edge_attr)))
+            hidden = self.messages(features, graph)
             active = torch.zeros(hidden.shape[0], device=hidden.device, dtype=torch.bool)
             active[graph.edge_index.reshape(-1)] = True
-            dense, mask = scatter_component_local(self.projection(hidden), graph, active)
+            dense, mask = scatter_component_local(hidden, graph, active)
             deltas.append(dense)
             masks.append(mask)
         return torch.stack(deltas), torch.stack(masks)
 
 
-class HybridSparseSAGEAVO(nn.Module):
+def component_source_permutation(graph: SparsePatchGraph, seed: int) -> Tensor:
+    """Deterministically reassign active source payloads, preserving graph degrees.
+
+    This is a message-source control, not a claim to rewire the frozen graph.
+    Isolated nodes are unchanged. No payload is imported across a component.
+    """
+    result = torch.arange(len(graph.coordinates), device=graph.components.device)
+    active = torch.unique(graph.edge_index)
+    for component in torch.unique(graph.components[active]).tolist():
+        nodes = active[graph.components[active] == component]
+        if len(nodes) < 2:
+            continue
+        generator = torch.Generator().manual_seed((int(seed) + 104729 * component) % (2**63 - 1))
+        order = torch.randperm(len(nodes), generator=generator).to(nodes.device)
+        # A fixed-point-free cyclic permutation of a randomized ordering.
+        shuffled = nodes[order]
+        result[shuffled] = torch.roll(shuffled, 1)
+    return result
+
+
+class LegacyDecoderHybridSAGEAVO(nn.Module):
     """Optional research wrapper; gamma=0 delegates exactly to the dense model.
 
     Sparse features are captured from the existing CNN at every forward call.
@@ -244,6 +285,9 @@ class HybridSparseSAGEAVO(nn.Module):
         self.sparse = SparseReflectorBranch(channels)
         self.gamma = float(gamma)
         self.last_support: Tensor | None = None
+
+    def set_norm_stats(self, statistics: Any) -> None:
+        self.dense.set_norm_stats(statistics)
 
     def forward(
         self,
@@ -334,3 +378,51 @@ class HybridSparseSAGEAVO(nn.Module):
                 )
 
         return heun_integrate(low.clone(), velocity, steps=steps, correction=correction)
+
+
+class HybridSparseSAGEAVO(LegacyDecoderHybridSAGEAVO):
+    """v00332ac pointwise post-decoder residual, with no spatial normalization.
+
+    The dense model is evaluated once on the same state. The sparse branch
+    samples that call's pre-GNN CNN features and projects them directly to three
+    velocity channels. Direct sparse contributions cannot mix components via
+    decoder convolutions or spatial GroupNorm. Subsequent conditional-flow
+    evaluations can still spread changed states through the existing dense CNN.
+    """
+
+    def __init__(
+        self, dense: SAGEAVO, channels: int, gamma: float = 0.0, *,
+        message_control: str = "genuine", control_seed: int = 12345,
+    ) -> None:
+        super().__init__(dense, channels, gamma)
+        self.sparse.message_control = message_control
+        if message_control not in {"genuine", "source_permuted"}:
+            raise ValueError("Unknown sparse message control")
+        self.sparse.control_seed = int(control_seed)
+        self.velocity_projection = nn.Conv2d(channels, 3, 1, bias=False)
+
+    def forward(
+        self, state: Tensor, time: Tensor, avo: Tensor, low: Tensor, rgt: Tensor,
+        graphs: Sequence[SparsePatchGraph] | None = None,
+    ) -> ModelOutput:
+        if self.gamma == 0:
+            self.last_support = None
+            return self.dense(state, time, avo, low, rgt)
+        if graphs is None or len(graphs) != len(state):
+            raise ValueError("Active sparse branch requires one graph per batch item")
+        captured: list[Tensor] = []
+
+        def save(_module: nn.Module, _inputs: tuple[Tensor, ...], output: Tensor) -> None:
+            captured.append(output)
+
+        handle = self.dense.encoder.register_forward_hook(save)
+        try:
+            output = self.dense(state, time, avo, low, rgt)
+        finally:
+            handle.remove()
+        if len(captured) != 1:
+            raise RuntimeError("Expected one current-state CNN feature map")
+        sparse, mask = self.sparse(captured[0], graphs)
+        self.last_support = mask
+        residual = self.gamma * mask * self.velocity_projection(sparse)
+        return output._replace(velocity=output.velocity + residual)

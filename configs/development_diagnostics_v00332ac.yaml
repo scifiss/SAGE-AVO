@@ -1,0 +1,49 @@
+revision: v00332ac-hybrid-training-integration
+reviewed_parent: a5434c2c73e6db8b39dc4d5b6d1db54abb602a73
+base_training_config: sage_avo_s01_v0031.yaml
+final_objective_reference: final_training_v00332d.yaml
+immutable_dataset: ds_v00331_production100_support_aware
+topology_config: development_diagnostics_v00332z.yaml
+training: false
+optimizer_steps: 0
+checkpoint_loads: 0
+diagnostic_train_ids: [3400000, 3400020]
+diagnostic_reused_validation_ids: [3400075, 3400099]
+diagnostic_indexed_patches_per_raw_scale: 3
+diagnostic_flow_steps: 20
+diagnostic_device: cuda
+seeds: [12345, 23456, 34567]
+sparse_branch:
+  gamma: 0.10
+  layers: 2
+  fusion: pointwise_post_decoder_velocity_residual
+  support: component_local_bilinear_without_collisions
+  control_seed: 33203
+  B_control: within_component_message_source_payload_permutation
+future_matched:
+  variants: [A, B, C]
+  epochs: 100
+  batch_size: 2
+  weighted_sampling: original_v00331_candidate_weights_and_replacement
+  data_order: identical_per_seed
+  augmentation: identical_draws_including_physics_halo_horizontal_flip
+  optimizer: AdamW
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  scheduler: cosine_annealing
+  primary_comparison: C_vs_B_paired_by_seed_and_realization
+  primary_metric: mean_train_normalized_whole_realization_RMSE_vp_vs_density
+  secondary_metrics: [density_RMSE, high_dip_RMSE, fault_corridor_RMSE, reservoir_RMSE, unsupported_RMSE, segmentation_mIoU, exact_PP_residual]
+  checkpoint_selection: minimum_validation_only_mean_normalized_RMSE_minus_0.1_mIoU
+  sample_steps: 20
+  patch_shape: [50, 100]
+  inference_stride: [10, 25]
+  untouched_test: immutable_split_ids_test_never_loaded_during_v00332ac
+  topology: same_observable_full_section_cache_then_crop
+  test_truth_use: final_evaluation_only_after_architecture_and_checkpoint_frozen
+gate:
+  zero_scale_max_error: 0.0
+  component_isolation_max_error: 0.000001
+  require_identical_cache_crop: true
+  require_matching_sampler_weights: true
+  require_nontrivial_source_permutation: true

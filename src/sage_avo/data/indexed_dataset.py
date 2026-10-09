@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 import json
 from pathlib import Path
+from typing import Any, TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -15,8 +16,11 @@ from torch.utils.data import Dataset
 from .augmentation import AugmentationConfig, augment_patch
 from .patches import resize_channels_first
 
+if TYPE_CHECKING:
+    from .sparse_topology import TopologyCache
 
-class IndexedRealizationPatches(Dataset[dict[str, Tensor]]):
+
+class IndexedRealizationPatches(Dataset[dict[str, Any]]):
     """Extract deterministic patches from immutable full-realization files."""
 
     def __init__(
@@ -27,6 +31,8 @@ class IndexedRealizationPatches(Dataset[dict[str, Tensor]]):
         augment: bool = False,
         augmentation_config: AugmentationConfig = AugmentationConfig(),
         augmentation_generator: torch.Generator | None = None,
+        topology_cache: TopologyCache | None = None,
+        matched_augmentation: bool = False,
     ) -> None:
         self.root = Path(dataset_directory)
         index = pd.read_csv(self.root / "patch_index.csv")
@@ -39,6 +45,9 @@ class IndexedRealizationPatches(Dataset[dict[str, Tensor]]):
         self.augment = bool(augment)
         self.augmentation_config = augmentation_config
         self.augmentation_generator = augmentation_generator
+        self.topology_cache = topology_cache
+        self.matched_augmentation = matched_augmentation
+        self._topology_validated: set[int] = set()
 
     def __len__(self) -> int:
         return len(self.index)
@@ -160,7 +169,7 @@ class IndexedRealizationPatches(Dataset[dict[str, Tensor]]):
             "mask": torch.from_numpy(arrays["mask"]),
         }
 
-    def __getitem__(self, index: int) -> dict[str, Tensor]:
+    def __getitem__(self, index: int) -> dict[str, Any]:
         arrays, metadata = self._raw_patch(index)
         x_mean = np.asarray(self.normalization["x_mean"], dtype=np.float32)[:, None, None]
         x_std = np.asarray(self.normalization["x_std"], dtype=np.float32)[:, None, None]
@@ -214,10 +223,26 @@ class IndexedRealizationPatches(Dataset[dict[str, Tensor]]):
                     ),
                 }
             )
+        if self.topology_cache is not None:
+            realization_id = int(metadata["realization_id"])
+            if realization_id not in self._topology_validated:
+                native = self._load(realization_id)
+                mask_name = "valid_mask" if "valid_mask" in native else "mask"
+                self.topology_cache.validate_observations(
+                    realization_id, avo=native["avo"], rgt=native["rgt"],
+                    support=native[mask_name],
+                )
+                self._topology_validated.add(realization_id)
+            item["sparse_graph"] = self.topology_cache.patch(
+                realization_id, top=int(metadata["top"]), left=int(metadata["left"]),
+                raw_shape=(height, width), output_shape=(output_height, output_width),
+            )
         if self.augment:
             item = augment_patch(
                 item,
                 self.augmentation_config,
                 generator=self.augmentation_generator,
+                record_geometry=self.matched_augmentation or self.topology_cache is not None,
+                synchronize_physics=self.matched_augmentation,
             )
         return item

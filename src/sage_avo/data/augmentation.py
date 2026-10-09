@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import torch
-from torch import Tensor
 
 
 @dataclass(frozen=True)
@@ -37,18 +37,30 @@ def _draw(generator: torch.Generator | None) -> float:
 
 
 def augment_patch(
-    item: dict[str, Tensor],
+    item: dict[str, Any],
     config: AugmentationConfig = AugmentationConfig(),
     *,
     generator: torch.Generator | None = None,
-) -> dict[str, Tensor]:
+    record_geometry: bool = False,
+    synchronize_physics: bool = False,
+) -> dict[str, Any]:
     """Apply registered geometry and mild normalized-domain AVO perturbations."""
     augmented = dict(item)
-    if _draw(generator) < config.horizontal_flip_probability:
+    flipped = _draw(generator) < config.horizontal_flip_probability
+    if record_geometry:
+        augmented["augmentation_horizontal_flip"] = torch.tensor(flipped)
+    if flipped:
         for name in ("avo", "target", "low", "rgt", "mask", "segmentation"):
             augmented[name] = torch.flip(augmented[name], dims=(-1,))
         if "dip" in augmented:
             augmented["dip"] = -torch.flip(augmented["dip"], dims=(-1,))
+        if synchronize_physics:
+            for name in ("physics_context", "physics_avo", "physics_mask"):
+                if name in augmented:
+                    augmented[name] = torch.flip(augmented[name], dims=(-1,))
+        if "sparse_graph" in augmented:
+            from sage_avo.models.hybrid_sparse import flip_sparse_graph_horizontal
+            augmented["sparse_graph"] = flip_sparse_graph_horizontal(augmented["sparse_graph"])
 
     if _draw(generator) < config.avo_gain_probability:
         gain = config.avo_gain_minimum + _draw(generator) * (

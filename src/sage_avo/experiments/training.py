@@ -38,6 +38,8 @@ from sage_avo.training.engine import (
     StepMetrics,
     train_epoch,
     validate_epoch,
+    _move_batch,
+    sparse_forward_kwargs,
 )
 from sage_avo.training.losses import (
     AdaptiveTaskWeighter,
@@ -247,11 +249,7 @@ def _validation_sample_metrics(
     for batch_index, batch in enumerate(loader):
         if batch_index >= max_batches:
             break
-        values = {
-            key: value.to(device, non_blocking=True)
-            for key, value in batch.items()
-            if isinstance(value, Tensor)
-        }
+        values = _move_batch(batch, device)
         prediction = model.sample(
             values["avo"],
             values["low"],
@@ -259,6 +257,7 @@ def _validation_sample_metrics(
             steps=steps,
             guidance_scale=guidance_scale,
             avo_mask=values["mask"],
+            **sparse_forward_kwargs(values),
         )
         mask = values["mask"].expand_as(prediction)
         error = ((prediction - values["target"]) ** 2 * mask).sum(dim=(0, 2, 3))
@@ -271,6 +270,7 @@ def _validation_sample_metrics(
             values["avo"],
             values["low"],
             values["rgt"],
+            **sparse_forward_kwargs(values),
         ).segmentation_logits.argmax(dim=1)
         valid = values["mask"][:, 0] > 0.5
         for label in range(3):
@@ -366,6 +366,7 @@ def _whole_realization_validation_metrics(
     batch_size: int,
     device: torch.device,
     guidance_scale: float,
+    topology_cache=None,
 ) -> dict[str, Any]:
     """Evaluate deterministic complete validation sections in physical units."""
     y_std = np.asarray(normalization["y_std"], dtype=np.float64)
@@ -386,6 +387,12 @@ def _whole_realization_validation_metrics(
                 device=device,
                 valid_mask=archive["valid_mask"],
                 guidance_scale=guidance_scale,
+                graph_provider=(
+                    topology_cache.tile_provider(
+                        realization_id, patch_shape, avo=archive["avo"],
+                        rgt=archive["rgt"], support=archive["valid_mask"],
+                    ) if topology_cache is not None else None
+                ),
             )
             target = np.asarray(archive["elastic"], dtype=np.float64)
             target_labels = np.asarray(archive["segmentation"], dtype=np.int64)
@@ -451,10 +458,19 @@ def train_controlled_variant(
     fixed_train_indices_by_epoch: Sequence[Sequence[int]] | None = None,
     fixed_validation_indices: Sequence[int] | None = None,
     initial_model_state: str | Path | None = None,
+    hybrid_condition: str | None = None,
+    topology_cache=None,
 ) -> Path:
     """Train one SAGE-AVO condition with the configured complete procedure."""
     configured_physics_weight = float(config["training"]["loss_weights"]["physics"])
     definition = variant_definition(variant, physics_weight=configured_physics_weight)
+    if hybrid_condition is not None:
+        if variant != "full" or hybrid_condition not in {"A", "B", "C"}:
+            raise ValueError("Hybrid A/B/C use the same full dense base variant")
+        if hybrid_condition != "A" and topology_cache is None:
+            raise ValueError("Hybrid B/C require an explicitly prepared topology cache")
+        if config.get("observability", {}).get("enabled", False):
+            raise ValueError("Legacy dense observability hooks are not configured for hybrid training")
     if definition.graph_mode is None:
         raise ValueError("The low-prior condition requires no training")
     seed = int(config["experiment"]["seed"])
@@ -470,7 +486,7 @@ def train_controlled_variant(
     )
     dataset_root = Path(dataset_directory)
     experiment_root = Path(experiment_directory)
-    run_directory = experiment_root / "runs" / (run_name or variant)
+    run_directory = experiment_root / "runs" / (run_name or hybrid_condition or variant)
     observability_config = config.get("observability")
     observability_enabled = bool(
         observability_config and observability_config.get("enabled", False)
@@ -518,8 +534,13 @@ def train_controlled_variant(
         augment=bool(training_config["augmentation"]["enabled"]),
         augmentation_config=_augmentation(config),
         augmentation_generator=augmentation_generator,
+        topology_cache=topology_cache if hybrid_condition in {"B", "C"} else None,
+        matched_augmentation=hybrid_condition is not None,
     )
-    validation_source_dataset = IndexedRealizationPatches(dataset_root, "validation")
+    validation_source_dataset = IndexedRealizationPatches(
+        dataset_root, "validation",
+        topology_cache=topology_cache if hybrid_condition in {"B", "C"} else None,
+    )
 
     def checked_indices(
         indices: Sequence[int], dataset_length: int, split: str
@@ -571,6 +592,10 @@ def train_controlled_variant(
         validation_dataset = Subset(validation_source_dataset, validation_indices)
     else:
         validation_dataset = validation_source_dataset
+    collate = None
+    if hybrid_condition is not None:
+        from sage_avo.data.sparse_topology import collate_sparse_patches
+        collate = collate_sparse_patches
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(training_config["batch_size"]),
@@ -579,6 +604,7 @@ def train_controlled_variant(
         generator=sampler_generator if shuffle else None,
         num_workers=0,
         pin_memory=device.type == "cuda",
+        collate_fn=collate,
     )
     validation_loader = DataLoader(
         validation_dataset,
@@ -586,14 +612,16 @@ def train_controlled_variant(
         shuffle=False,
         num_workers=0,
         pin_memory=device.type == "cuda",
+        collate_fn=collate,
     )
 
     physics_settings = physics_settings_from_config(config)
     graph_objective_settings = graph_objective_from_config(config)
-    model = build_sage_avo_variant(
-        variant,
-        **sage_avo_model_kwargs(config),
-    ).to(device)
+    if hybrid_condition is None:
+        model = build_sage_avo_variant(variant, **sage_avo_model_kwargs(config)).to(device)
+    else:
+        from .hybrid_integration import build_hybrid_condition
+        model = build_hybrid_condition(config, hybrid_condition).to(device)
     initial_state_path = Path(initial_model_state) if initial_model_state is not None else None
     if initial_state_path is not None:
         initial_state = torch.load(initial_state_path, map_location=device, weights_only=True)
@@ -698,6 +726,17 @@ def train_controlled_variant(
         "reference_training_contract", config.get("final_005_settings", {})
     )
     manifest["source_stage02_status"] = source_status or "not_applicable"
+    if hybrid_condition is not None:
+        manifest["hybrid_condition"] = hybrid_condition
+        manifest["hybrid_sparse"] = config["hybrid_sparse"]
+        manifest["topology_cache"] = (
+            {"config_sha256": topology_cache.config_hash,
+             "source_sha256": topology_cache.source_hashes,
+             "directory": str(topology_cache.directory)}
+            if hybrid_condition in {"B", "C"} else None
+        )
+        if resume_from is not None and previous_manifest.get("hybrid_condition") != hybrid_condition:
+            raise ValueError("Refusing to resume a different hybrid condition")
     manifest["operator_validation_subset_allowed"] = bool(allow_operator_validation_subset)
     manifest["graph_objective"] = {
         **graph_objective_settings.__dict__,
@@ -1078,6 +1117,7 @@ def train_controlled_variant(
                     batch_size=int(training_config["batch_size"]),
                     device=device,
                     guidance_scale=guidance_scale,
+                    topology_cache=topology_cache if hybrid_condition in {"B", "C"} else None,
                 )
                 whole_criterion = float(whole_metrics["criterion"])
                 whole_rmse = list(whole_metrics["normalized_rmse"])

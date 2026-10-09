@@ -73,12 +73,20 @@ class StepMetrics:
     structure: float
 
 
-def _move_batch(batch: dict[str, Tensor], device: torch.device) -> dict[str, Tensor]:
-    return {
+def _move_batch(batch: dict, device: torch.device) -> dict:
+    values = {
         key: value.to(device, non_blocking=True)
         for key, value in batch.items()
         if isinstance(value, Tensor)
     }
+    if "sparse_graphs" in batch:
+        values["sparse_graphs"] = [graph.to(device) for graph in batch["sparse_graphs"]]
+    return values
+
+
+def sparse_forward_kwargs(values: dict) -> dict:
+    """Default dense call is identical; graph-bearing batches opt in explicitly."""
+    return {"graphs": values["sparse_graphs"]} if "sparse_graphs" in values else {}
 
 
 def _forward_objective(
@@ -97,7 +105,9 @@ def _forward_objective(
     graph_objective: GraphObjectiveSettings = GraphObjectiveSettings(),
 ) -> tuple[Tensor, dict[str, Tensor]]:
     state, target_velocity = straight_path(values["low"], values["target"], time)
-    output = model(state, time, values["avo"], values["low"], values["rgt"])
+    output = model(
+        state, time, values["avo"], values["low"], values["rgt"], **sparse_forward_kwargs(values)
+    )
     predicted_full = output.velocity + values["low"]
     structural = (
         graph_structure_loss(
